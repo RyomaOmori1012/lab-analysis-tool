@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.subplots as plt_subplots
 import matplotlib.pyplot as plt
 import seaborn as sns
 import japanize_matplotlib
@@ -54,11 +55,11 @@ is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
 if 'WB' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
+    t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的代謝物:', '例: PpIX', '基準(IS):', '例: protein', 'Intracellular Concentration'
+    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration'
 elif 'qPCR' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子(Ct):', '例: 22.5', '内部標準(Ct):', '例: 19.7', 'Relative mRNA level'
+    t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
 elif is_mtt:
     t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬物:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
@@ -68,8 +69,18 @@ c_side1, c_side2 = st.sidebar.columns(2)
 with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
 with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
-t_name = target_prot.strip() or "Target"
-l_name = loading_prot.strip() or "Loading"
+t_name_raw = target_prot.strip()
+l_name_raw = loading_prot.strip()
+
+if is_mtt:
+    t_name = t_name_raw or "Cell Line"
+    l_name = l_name_raw or "Drug"
+elif is_microscope:
+    t_name = t_name_raw or "Target"
+    l_name = ""
+else:
+    t_name = t_name_raw or "Target"
+    l_name = l_name_raw or "Loading Control"
 
 if is_mtt or is_microscope: y_label_full = y_label_def
 else: y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
@@ -81,7 +92,6 @@ if not is_mtt:
     layout_mode = st.sidebar.radio("棒の配置:", ["均等に並べる", "条件ごとにグループ化"])
     color_mode = st.sidebar.radio("配色:", ["すべて黒", "上段ラベルで色分け（黒/グレー）"])
     
-    # ★ 棒の太さ調整スライダー機能（他のロジックに影響を与えないよう動的に初期値を変更）
     default_width = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
     bar_width_input = st.sidebar.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=default_width, step=0.01)
     
@@ -137,8 +147,7 @@ with col_input:
         with c7: mtt_dilution = st.number_input('希釈倍率(n倍):', value=2.0)
         with c8: mtt_unit = st.text_input('単位:', 'μM')
         
-        # ★ 追加：MTT横軸のカスタム目盛り入力欄
-        mtt_custom_xticks = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動のみ）', value='', placeholder='例: 50, 250, 500')
+        mtt_custom_xticks = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250')
         
         for i in range(num_cond):
             p_name = st.text_input(f'プレート {i+1} 条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
@@ -309,23 +318,25 @@ with col_graph:
                 
                 ax_i.set_xscale('log'); ax_i.set_ylim(bottom=0, top=125)
                 ax_i.yaxis.set_major_locator(ticker.MultipleLocator(20))
-                ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
                 for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
-                
                 ax_i.minorticks_off()
                 
-                # ★ 個別グラフへのカスタム目盛りの追加
                 if mtt_custom_xticks.strip() and len(conc_vals_plot) > 0:
                     try:
                         c_ticks = [float(x.strip()) for x in mtt_custom_xticks.split(',') if x.strip()]
-                        low_exp = int(np.floor(np.log10(min(conc_vals_plot))))
-                        high_exp = int(np.ceil(np.log10(max(conc_vals_plot))))
+                        all_x = conc_vals_plot + c_ticks
+                        min_x, max_x = min(all_x), max(all_x)
+                        low_exp = int(np.floor(np.log10(min_x)))
+                        high_exp = int(np.ceil(np.log10(max_x)))
                         default_ticks = [10**e for e in range(low_exp, high_exp + 1)]
-                        combined_ticks = sorted(list(set(default_ticks + c_ticks + [min(conc_vals_plot), max(conc_vals_plot)])))
-                        combined_ticks = [t for t in combined_ticks if t >= min(conc_vals_plot)*0.8 and t <= max(conc_vals_plot)*1.2]
+                        combined_ticks = sorted(list(set(default_ticks + c_ticks)))
                         ax_i.set_xticks(combined_ticks)
+                        ax_i.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
+                        ax_i.set_xlim(min_x * 0.8, max_x * 1.2)
                     except: pass
+                else:
+                    ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                     
                 ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
                 
@@ -361,30 +372,32 @@ with col_graph:
 
             ax.set_xscale('log'); ax.set_ylim(bottom=0, top=125)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
-            ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
             
             for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
-            
             ax.minorticks_off()
             
             # ★ 統合グラフへのカスタム目盛りの追加
             if mtt_custom_xticks.strip() and len(conc_vals_plot) > 0:
                 try:
                     c_ticks = [float(x.strip()) for x in mtt_custom_xticks.split(',') if x.strip()]
-                    low_exp = int(np.floor(np.log10(min(conc_vals_plot))))
-                    high_exp = int(np.ceil(np.log10(max(conc_vals_plot))))
+                    all_x = conc_vals_plot + c_ticks
+                    min_x, max_x = min(all_x), max(all_x)
+                    low_exp = int(np.floor(np.log10(min_x)))
+                    high_exp = int(np.ceil(np.log10(max_x)))
                     default_ticks = [10**e for e in range(low_exp, high_exp + 1)]
-                    combined_ticks = sorted(list(set(default_ticks + c_ticks + [min(conc_vals_plot), max(conc_vals_plot)])))
-                    combined_ticks = [t for t in combined_ticks if t >= min(conc_vals_plot)*0.8 and t <= max(conc_vals_plot)*1.2]
+                    combined_ticks = sorted(list(set(default_ticks + c_ticks)))
                     ax.set_xticks(combined_ticks)
+                    ax.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
+                    ax.set_xlim(min_x * 0.8, max_x * 1.2)
                 except: pass
+            else:
+                ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
             ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
             
             ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
             ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
             
-            # ★ 修正：系列が1つの時は凡例を出さない
             if num_p > 1:
                 ax.legend(loc='lower left', frameon=False, prop={'size': 13})
             
@@ -438,17 +451,6 @@ with col_graph:
                         signif = "***" if p_val<0.001 else "**" if p_val<0.01 else "*" if p_val<0.05 else "ns" if not np.isnan(p_val) else "N/A"
                         stat_data.append({f"濃度({mtt_unit})": conc_str, "p値": p_val if not np.isnan(p_val) else "N/A", "有意差": signif, "検定手法": test_name or "データ不足"})
                     if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
-
-                try:
-                    ws = writer.book['Summary']
-                    sc = len(mtt_summary_dict.keys()) + 2
-                    ws.cell(row=2, column=sc, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
-                    ws.cell(row=3, column=sc, value="1. 左の濃度と各条件の『Mean』の列だけをCtrlキーで選択し、[挿入] ＞ [散布図(直線とマーカー)]")
-                    ws.cell(row=4, column=sc, value="2. グラフ上の線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]")
-                    ws.cell(row=5, column=sc, value="3. 『両方向』『キャップ』にし、『カスタム』にチェックを入れ『値の指定』")
-                    ws.cell(row=6, column=sc, value="4. 正負両方に、該当条件の『SD』列の数値を指定すれば完成！")
-                    ws.cell(row=7, column=sc, value="※濃度0のControlは対数軸でエラーになるため選択から外すか、微小な値(0.001など)に書き換えてください。")
-                except: pass
 
             st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             
@@ -523,7 +525,6 @@ with col_graph:
             ax.set_facecolor('white')
             
             x_coords = {}
-            # ★ 固定値からサイドバーのスライダーと連動
             bar_width = bar_width_input
             
             if layout_mode == "条件ごとにグループ化":
@@ -646,14 +647,6 @@ with col_graph:
             else:
                 ax.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=14, pad=15)
 
-            if plotted_stars:
-                y_pos = -0.28 if layout_mode == "条件ごとにグループ化" else -0.21
-                star_texts = []
-                if "*" in plotted_stars: star_texts.append("* p < 0.05")
-                if "**" in plotted_stars: star_texts.append("** p < 0.01")
-                if "***" in plotted_stars: star_texts.append("*** p < 0.001")
-                ax.text(1.0, y_pos, ",  ".join(star_texts), transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
-
             st.pyplot(fig)
             
             excel_buffer = io.BytesIO()
@@ -675,7 +668,7 @@ with col_graph:
                     if is_microscope:
                         ws = writer.book['Normalized_Data']
                         ws.cell(row=2, column=4, value="💡 【箱ひげ図の最短作成手順】")
-                        ws.cell(row=3, column=4, value="1. LeftのA列とB列をすべて全選択します。")
+                        ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
                         ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
                     elif layout_mode == "条件ごとにグループ化":
                         matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
@@ -710,7 +703,7 @@ with col_graph:
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
