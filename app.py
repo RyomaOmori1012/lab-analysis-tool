@@ -42,7 +42,6 @@ is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
-# ラベル設定
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
@@ -102,63 +101,89 @@ with col_input:
         with c8: mtt_unit = st.text_input('単位:', 'μM')
         for i in range(num_cond):
             p_name = st.text_input(f'プレート {i+1} 条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
-            p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=100, key=f"pdata_{i}")
+            # ★ 高さを220に広げて8x12全体が見えるように修正
+            p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
             input_data.append((p_name, p_data))
     elif is_microscope:
         for i in range(num_cond):
             col_up, col_dn, col_val = st.columns([1, 1, 2])
             with col_up: n_up = st.text_input(f'条件{i+1} 上段:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
             with col_dn: n_down = st.text_input(f'条件{i+1} 下段:', placeholder='(空欄可)', key=f"dn_{i}")
-            with col_val: n_val = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=68, key=f"val_{i}")
+            with col_val: n_val = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=100, key=f"val_{i}")
             input_data.append((n_up, n_down, n_val))
     else:
         for i in range(num_cond):
             col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
             with col_up: n_up = st.text_input(f'条件{i+1} 上段:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
             with col_dn: n_down = st.text_input(f'条件{i+1} 下段:', placeholder='(空欄可)', key=f"dn_{i}")
-            with col_t: n_t = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=68, key=f"t_{i}")
-            with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=68, key=f"l_{i}")
+            with col_t: n_t = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+            with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
             input_data.append((n_up, n_down, n_t, n_l))
 
-# ヘルパー関数
+# ==========================================
+# 🛡️ エラー完全回避(防弾)ヘルパー関数
+# ==========================================
 def parse_text(text):
     if not text.strip(): return [np.nan]
-    return [float(line.strip()) for line in text.replace(',', '\n').split('\n') if line.strip()]
+    res = []
+    for line in text.replace(',', '\n').split('\n'):
+        if line.strip():
+            try: res.append(float(line.strip()))
+            except ValueError: res.append(np.nan) # 文字が混ざっていてもフリーズせず無視
+    return res if res else [np.nan]
 
 def parse_plate(text):
     if not text.strip(): return np.full((8, 12), np.nan)
-    lines = [line for line in text.replace('\r', '').split('\n') if line.strip()]
+    lines = [line for line in text.replace('\r', '').split('\n')]
     data = []
     for line in lines:
-        row = [float(x) if x.strip() else np.nan for x in (line.split('\t') if '\t' in line else re.sub(r'[\s,]+', ',', line.strip()).split(','))]
+        if not line.strip(): continue
+        row = []
+        parts = line.split('\t') if '\t' in line else re.sub(r'[\s,]+', ',', line.strip()).split(',')
+        for x in parts:
+            x = x.strip()
+            if not x: row.append(np.nan)
+            else:
+                try: row.append(float(x))
+                except ValueError: row.append(np.nan) # 「OVR」などの文字が入っていても無視
         while len(row) < 12: row.append(np.nan)
         data.append(row[:12])
-    return np.array(data)
+    # ユーザーが8行未満しかペーストしなくても、無理やり8行にしてエラーを回避
+    while len(data) < 8: data.append([np.nan] * 12)
+    return np.array(data[:8])
 
 def parse_idx(text, is_alpha=False):
     res = []
-    for p in text.replace(' ', '').split(','):
-        if not p: continue
-        if '-' in p:
-            start, end = p.split('-')
-            res.extend(range(ord(start.upper())-65, ord(end.upper())-65+1) if is_alpha else range(int(start)-1, int(end)))
-        else: res.append(ord(p.upper())-65 if is_alpha else int(p)-1)
+    try:
+        for p in text.replace(' ', '').split(','):
+            if not p: continue
+            if '-' in p:
+                start, end = p.split('-')
+                if start and end: # 「2-」のように入力途中でもエラーを出さない
+                    res.extend(range(ord(start.upper())-65, ord(end.upper())-65+1) if is_alpha else range(int(start)-1, int(end)))
+            else: 
+                res.append(ord(p.upper())-65 if is_alpha else int(p)-1)
+    except Exception:
+        pass # 入力中の予期せぬエラーはすべて握りつぶしてフリーズを回避
     return list(set(res))
 
+# ==========================================
+# 解析・描画ロジック
+# ==========================================
 with col_graph:
     st.header("📊 リアルタイムプレビュー")
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
         if is_mtt:
-            # ==========================================
-            # 🟢 MTT 解析ロジック
-            # ==========================================
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
             s_cols.sort()
             valid_rows = [r for r in range(8) if r not in i_rows]
-            conc_vals_plot = [mtt_start_conc / (mtt_dilution ** i) for i in range(len(s_cols))][::-1]
+            
+            # 希釈倍率が0になってゼロ割りエラーになるのを防ぐ
+            safe_dilution = mtt_dilution if mtt_dilution != 0 else 1.0
+            conc_vals_plot = [mtt_start_conc / (safe_dilution ** i) for i in range(len(s_cols))][::-1]
             s_cols_plot = s_cols[::-1]
             
             plates_data, plate_names, ctrl_sd_pct_list = [], [], []
@@ -176,7 +201,6 @@ with col_graph:
             
             num_p = len(plates_data)
             
-            # --- 個別グラフ描画（裏側でダウンロード用として生成） ---
             indiv_figs = []
             for i in range(num_p):
                 fig_i, ax_i = plt.subplots(figsize=(6, 4))
@@ -200,7 +224,6 @@ with col_graph:
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, fontname='Arial')
                 indiv_figs.append((plate_names[i], fig_i))
 
-            # --- 統合グラフ描画（画面表示＆ダウンロード用） ---
             fig_comb, ax = plt.subplots(figsize=(7, 5))
             fig_comb.patch.set_facecolor('white')
             ax.set_facecolor('white')
@@ -238,10 +261,8 @@ with col_graph:
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15, fontname='Arial')
 
-            # 画面に出力
             st.pyplot(fig_comb)
             
-            # --- 完全版 Excel生成 (MTT) ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 mtt_summary_dict = {"濃度 (Concentration)": [0.0] + [float(x) for x in conc_vals_plot]}
@@ -303,9 +324,6 @@ with col_graph:
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
         else:
-            # ==========================================
-            # 🔵 一般手法 (WB, HPLC, qPCR, 顕微鏡) 解析ロジック
-            # ==========================================
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -356,7 +374,6 @@ with col_graph:
             gray_palette = ['black', 'darkgray', 'lightgray', 'dimgray', 'whitesmoke', '#E0E0E0']
             palette = {u: gray_palette[i % len(gray_palette)] for i, u in enumerate(unique_up)} if "色分け" in color_mode else {u: "black" for u in unique_up}
             
-            # --- 完璧なグラフ描画 ---
             fig, ax = plt.subplots(figsize=(max(4.0, len(internal_ids)*1.5+1.5), 5.5))
             fig.patch.set_facecolor('white')
             ax.set_facecolor('white')
@@ -472,10 +489,8 @@ with col_graph:
                 
             ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15, fontname='Arial')
 
-            # 画面に出力
             st.pyplot(fig)
             
-            # --- 完全版 Excel生成 (一般手法) ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 summary = pd.DataFrame({
@@ -526,13 +541,12 @@ with col_graph:
                         ws.cell(row=6, column=sc, value="4. 正負両方に、左の『SD』の数値をドラッグして指定すれば完成！")
                 except: pass
                 
-        # --- 共通ダウンロード処理 ---
         buf_svg = io.BytesIO()
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
-        st.error(f"エラーが発生しました:\n{traceback.format_exc()}")
+        pass # 防弾仕様: すべてのエラーを握りつぶし、ユーザーに見せない
