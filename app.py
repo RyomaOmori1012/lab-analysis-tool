@@ -21,7 +21,6 @@ warnings.filterwarnings('ignore')
 
 # --- フォントのグローバル設定 ---
 plt.rcParams['font.family'] = 'sans-serif'
-# ★ 英数はArial、日本語はMS Pゴシックを優先する設定
 plt.rcParams['font.sans-serif'] = ['Arial', 'MS PGothic', 'IPAexGothic']
 plt.rcParams['mathtext.fontset'] = 'custom'
 plt.rcParams['mathtext.rm'] = 'Arial'
@@ -226,7 +225,6 @@ with col_graph:
                 
                 for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
                 
-                # ★ 細かい目盛りを強制オフ
                 ax_i.minorticks_off()
                 ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
                 
@@ -264,7 +262,6 @@ with col_graph:
             
             for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
             
-            # ★ 統合グラフの細かい目盛りも強制オフ
             ax.minorticks_off()
             ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
             
@@ -272,7 +269,8 @@ with col_graph:
             ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
             ax.legend(loc='lower left', frameon=False, prop={'size': 13})
             
-            mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA (Tukey)" if num_p >= 3 else "MTT Assay"
+            # ★ ここを正式名称に修正しました
+            mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA followed by Tukey's test" if num_p >= 3 else "MTT Assay"
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15)
 
@@ -490,16 +488,17 @@ with col_graph:
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
+            # ★ ここを正式名称に修正しました
             if is_grouped_test:
                 g_lens = [len([u for u in internal_ids if lower_labels[internal_ids.index(u)] == low]) for low in unique_low]
                 max_g_len = max(g_lens) if g_lens else 0
                 if max_g_len == 2: test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
-                elif max_g_len >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA (Tukey)"
+                elif max_g_len >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA followed by Tukey's test"
                 else: test_desc_flat = "Statistical Test"
             else:
                 num_g = len(internal_ids)
                 if num_g == 2: test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
-                elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA (Tukey)"
+                elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA followed by Tukey's test"
                 else: test_desc_flat = "Statistical Test"
                 
             ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15)
