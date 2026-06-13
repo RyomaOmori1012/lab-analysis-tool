@@ -47,7 +47,7 @@ st.markdown("""
 # ==========================================
 st.sidebar.header("⚙️ 全体設定")
 selected_exp = st.sidebar.selectbox('実験手法:', ['Western Blotting (WB)', 'HPLC', 'qPCR', 'MTT Assay (細胞生存率)', '蛍光顕微鏡 (Box Plot)'])
-num_cond = st.sidebar.number_input('総条件数(Control含):', min_value=1, max_value=20, value=4, step=1)
+num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=1, max_value=20, value=4, step=1)
 
 is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
@@ -58,7 +58,7 @@ if 'WB' in selected_exp:
 elif 'HPLC' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = '目的代謝物:', '例: PpIX', '基準(IS):', '例: protein', 'Intracellular Concentration'
 elif 'qPCR' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子:', '例: PDK1', '内部標準:', '例: β-ACTIN', 'Relative mRNA level'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子(Ct):', '例: 22.5', '内部標準(Ct):', '例: 19.7', 'Relative mRNA level'
 elif is_mtt:
     t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬物:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
@@ -114,21 +114,81 @@ with col_input:
             p_name = st.text_input(f'プレート {i+1} 条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
             p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
             input_data.append((p_name, p_data))
-    elif is_microscope:
-        for i in range(num_cond):
-            col_up, col_dn, col_val = st.columns([1, 1, 2])
-            with col_up: n_up = st.text_input(f'条件{i+1} 上段:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-            with col_dn: n_down = st.text_input(f'条件{i+1} 下段:', placeholder='(空欄可)', key=f"dn_{i}")
-            with col_val: n_val = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=100, key=f"val_{i}")
-            input_data.append((n_up, n_down, n_val))
     else:
-        for i in range(num_cond):
-            col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
-            with col_up: n_up = st.text_input(f'条件{i+1} 上段:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-            with col_dn: n_down = st.text_input(f'条件{i+1} 下段:', placeholder='(空欄可)', key=f"dn_{i}")
-            with col_t: n_t = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
-            with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
-            input_data.append((n_up, n_down, n_t, n_l))
+        # ★ 究極の「独立列ペースト＆並び替え」モード
+        input_mode = st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True)
+        
+        if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）":
+            st.info("💡 エクセル上で離れた列にあってもOK！必要な列だけを個別にコピーしてペーストしてください。\nペースト後に出現する表で、離れたサンプルを隣同士に整理できます。")
+            
+            if is_microscope:
+                c_n, c_t = st.columns(2)
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nCond_A\nCond_A\nCond_B\nCond_B")
+                with c_t: bulk_t = st.text_area(f"2. 【{t_name}】をペースト", height=150)
+                bulk_l = ""
+            else:
+                c_n, c_t, c_l = st.columns(3)
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC30\nsiNC30\nsiHSPA930")
+                with c_l: bulk_l = st.text_area(f"2. 【{l_name}】をペースト", height=150)
+                with c_t: bulk_t = st.text_area(f"3. 【{t_name}】をペースト", height=150)
+            
+            if bulk_n.strip():
+                try:
+                    n_lines = [line.strip() for line in bulk_n.replace('\r', '').split('\n') if line.strip()]
+                    t_lines = [line.strip() for line in bulk_t.replace('\r', '').split('\n') if line.strip()] if bulk_t.strip() else []
+                    l_lines = [line.strip() for line in bulk_l.replace('\r', '').split('\n') if line.strip()] if bulk_l.strip() else []
+
+                    # 辞書に集約（名前ごとにデータを蓄積）
+                    raw_dict = {}
+                    for i, name in enumerate(n_lines):
+                        if not name: continue
+                        if name not in raw_dict: raw_dict[name] = {'t': [], 'l': []}
+                        
+                        if i < len(t_lines):
+                            t_vals = [float(x) for x in re.sub(r'[\s,]+', ',', t_lines[i]).split(',') if x.strip()]
+                            raw_dict[name]['t'].extend(t_vals)
+                        if not is_microscope and i < len(l_lines):
+                            l_vals = [float(x) for x in re.sub(r'[\s,]+', ',', l_lines[i]).split(',') if x.strip()]
+                            raw_dict[name]['l'].extend(l_vals)
+
+                    unique_names = list(raw_dict.keys())
+                    
+                    st.markdown("### 🔄 サンプルの整理・並び替え")
+                    st.write("Excelで離れていたサンプルも、**「表示順」**の数字を打ち換えることでグラフ上で隣同士にできます！")
+                    
+                    mapping_df = pd.DataFrame({
+                        "表示順 (1,2,3...)": range(1, len(unique_names) + 1),
+                        "エクセルの名前 (読取専用)": unique_names,
+                        "上段ラベル": unique_names,
+                        "下段ラベル (空欄可)": [""] * len(unique_names)
+                    })
+                    
+                    edited_df = st.data_editor(mapping_df, hide_index=True, use_container_width=True, disabled=["エクセルの名前 (読取専用)"])
+                    edited_df = edited_df.sort_values(by="表示順 (1,2,3...)")
+                    
+                    for _, row in edited_df.iterrows():
+                        orig_name = row["エクセルの名前 (読取専用)"]
+                        u_label = str(row["上段ラベル"]) if pd.notna(row["上段ラベル"]) and str(row["上段ラベル"]).strip() else ""
+                        d_label = str(row["下段ラベル (空欄可)"]) if pd.notna(row["下段ラベル (空欄可)"]) and str(row["下段ラベル (空欄可)"]).strip() else ""
+                        
+                        t_data = '\n'.join(map(str, raw_dict[orig_name]['t']))
+                        
+                        if is_microscope:
+                            input_data.append((u_label, d_label, t_data))
+                        else:
+                            l_data = '\n'.join(map(str, raw_dict[orig_name]['l']))
+                            input_data.append((u_label, d_label, t_data, l_data))
+                            
+                except Exception as e:
+                    st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
+        else:
+            for i in range(num_cond):
+                col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
+                with col_up: n_up = st.text_input(f'条件{i+1} 上段:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                with col_dn: n_down = st.text_input(f'条件{i+1} 下段:', placeholder='(空欄可)', key=f"dn_{i}")
+                with col_t: n_t = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
+                input_data.append((n_up, n_down, n_t, n_l))
 
 # ==========================================
 # 🛡️ エラー完全回避(防弾)ヘルパー関数
@@ -269,7 +329,6 @@ with col_graph:
             ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
             ax.legend(loc='lower left', frameon=False, prop={'size': 13})
             
-            # ★ ここを正式名称に修正しました
             mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA followed by Tukey's test" if num_p >= 3 else "MTT Assay"
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15)
@@ -359,6 +418,10 @@ with col_graph:
                 upper_labels.append(u or f"U_{idx+1}"); lower_labels.append(d or "")
                 internal_ids.append(f"C_{idx}")
             
+            has_data = any(len([v for v in raw_processed[uid] if not np.isnan(v)]) > 0 for uid in internal_ids)
+            if not has_data:
+                st.stop()
+                
             final_norm = {}
             ctrl_id = internal_ids[0]
             for i, uid in enumerate(internal_ids):
@@ -438,7 +501,7 @@ with col_graph:
                 for low in unique_low:
                     members = [i for i, l in enumerate(lower_labels) if l == low]
                     xs = [x_coords[internal_ids[i]] for i in members]
-                    ax.text(sum(xs) / len(xs), -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+                    if xs: ax.text(sum(xs) / len(xs), -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
             else:
                 for i, uid in enumerate(internal_ids):
                     ax.text(x_coords[uid], -0.05, upper_labels[i], ha='center', va='top', transform=trans, fontsize=16, color='black', fontweight='bold')
@@ -477,7 +540,7 @@ with col_graph:
 
             ax.set_ylim(0, base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3)
             x_vals = list(x_coords.values())
-            ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
+            if x_vals: ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
             ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
             
             if "色分け" in color_mode:
@@ -488,7 +551,6 @@ with col_graph:
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
-            # ★ ここを正式名称に修正しました
             if is_grouped_test:
                 g_lens = [len([u for u in internal_ids if lower_labels[internal_ids.index(u)] == low]) for low in unique_low]
                 max_g_len = max(g_lens) if g_lens else 0
