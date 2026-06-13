@@ -53,13 +53,12 @@ is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
-# サイドバーの入力枠のラベル（完璧だったバージョンのまま）
 if 'WB' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
+    t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的代謝物:', '例: PpIX', '基準(IS):', '例: protein', 'Intracellular Concentration'
+    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration'
 elif 'qPCR' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子(Ct):', '例: 22.5', '内部標準(Ct):', '例: 19.7', 'Relative mRNA level'
+    t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
 elif is_mtt:
     t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬物:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
@@ -79,7 +78,6 @@ ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height
 if not is_mtt:
     st.sidebar.markdown("---")
     st.sidebar.header("🖌️ レイアウト・配色設定")
-    # ★ 名称変更：条件ごとにグループ化
     layout_mode = st.sidebar.radio("棒の配置:", ["均等に並べる", "条件ごとにグループ化"])
     color_mode = st.sidebar.radio("配色:", ["すべて黒", "上段ラベルで色分け（黒/グレー）"])
     pairing_options = ['独立 (Welch・ANOVA等)', 'ノンパラ (Mann-Whitney / Kruskal-Wallis等)'] if is_microscope else ['独立 (Welch・ANOVA等)', '対応あり (Paired等)']
@@ -89,7 +87,6 @@ if not is_mtt:
 else:
     layout_mode, color_mode, pairing_mode, norm_mode, test_target_mode = "", "", "", "", ""
 
-# ★ 入力ラベルの動的切り替え（直感的な名称へ）
 if not is_mtt:
     if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
         u_label_name = "系列名"
@@ -100,7 +97,6 @@ if not is_mtt:
 else:
     u_label_name, d_label_name = "", ""
 
-# ★ ペースト枠専用の案内文字の設定
 if 'WB' in selected_exp or 'qPCR' in selected_exp:
     paste_t_label = 'Target'
     paste_l_label = 'Loading Control'
@@ -355,15 +351,17 @@ with col_graph:
             
             mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA followed by Tukey's test" if num_p >= 3 else "MTT Assay"
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
-            ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15)
-
-            # ★ 有意差の星の説明書き追加
+            
+            # ★ 星の説明をタイトルに組み込む
+            star_str = ""
             if plotted_stars:
                 star_texts = []
                 if "*" in plotted_stars: star_texts.append("* p < 0.05")
                 if "**" in plotted_stars: star_texts.append("** p < 0.01")
                 if "***" in plotted_stars: star_texts.append("*** p < 0.001")
-                ax.text(1.0, -0.22, ",  ".join(star_texts), transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
+                star_str = ", " + ", ".join(star_texts)
+                
+            ax.set_title(f"{mtt_test_desc}{star_str}, n={max_n}", fontsize=14, pad=15)
 
             st.pyplot(fig_comb)
             
@@ -597,16 +595,19 @@ with col_graph:
                 elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA followed by Tukey's test"
                 else: test_desc_flat = "Statistical Test"
                 
-            ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15)
-
-            # ★ 有意差の星の説明書き追加
+            # ★ 星の説明をタイトルに組み込む
+            star_str = ""
             if plotted_stars:
-                y_pos = -0.28 if layout_mode == "条件ごとにグループ化" else -0.21
                 star_texts = []
                 if "*" in plotted_stars: star_texts.append("* p < 0.05")
                 if "**" in plotted_stars: star_texts.append("** p < 0.01")
                 if "***" in plotted_stars: star_texts.append("*** p < 0.001")
-                ax.text(1.0, y_pos, ",  ".join(star_texts), transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
+                star_str = ", " + ", ".join(star_texts)
+                
+            if is_microscope:
+                ax.set_title(f"{test_desc_flat}{star_str}", fontsize=14, pad=15)
+            else:
+                ax.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=14, pad=15)
 
             st.pyplot(fig)
             
