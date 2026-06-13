@@ -53,12 +53,13 @@ is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
-# ★ 実験手法に応じた入力項目の名前変更
-if 'WB' in selected_exp or 'qPCR' in selected_exp:
-    t_label, t_ph, l_label, l_ph = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90 / β-ACTIN'
-    y_label_def = 'Relative mRNA level' if is_qpcr else 'Relative Band Intensity'
+# サイドバーの入力枠のラベル（完璧だったバージョンのまま）
+if 'WB' in selected_exp:
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的代謝物:', '例: PpIX', '基準(IS):', '例: protein', 'Intracellular Concentration'
+elif 'qPCR' in selected_exp:
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子(Ct):', '例: 22.5', '内部標準(Ct):', '例: 19.7', 'Relative mRNA level'
 elif is_mtt:
     t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬物:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
@@ -69,7 +70,7 @@ with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
 with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
 t_name = target_prot.strip() or "Target"
-l_name = loading_prot.strip() or "Loading Control"
+l_name = loading_prot.strip() or "Loading"
 
 if is_mtt or is_microscope: y_label_full = y_label_def
 else: y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
@@ -78,7 +79,7 @@ ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height
 if not is_mtt:
     st.sidebar.markdown("---")
     st.sidebar.header("🖌️ レイアウト・配色設定")
-    # ★ 「下段ラベルでグループ化」→「条件ごとにグループ化」に変更
+    # ★ 名称変更：条件ごとにグループ化
     layout_mode = st.sidebar.radio("棒の配置:", ["均等に並べる", "条件ごとにグループ化"])
     color_mode = st.sidebar.radio("配色:", ["すべて黒", "上段ラベルで色分け（黒/グレー）"])
     pairing_options = ['独立 (Welch・ANOVA等)', 'ノンパラ (Mann-Whitney / Kruskal-Wallis等)'] if is_microscope else ['独立 (Welch・ANOVA等)', '対応あり (Paired等)']
@@ -88,21 +89,27 @@ if not is_mtt:
 else:
     layout_mode, color_mode, pairing_mode, norm_mode, test_target_mode = "", "", "", "", ""
 
-# ★ レイアウトに応じた入力枠の名称変更
-if not is_mtt and not is_microscope:
+# ★ 入力ラベルの動的切り替え（直感的な名称へ）
+if not is_mtt:
     if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
         u_label_name = "系列名"
         d_label_name = "横ラベル"
     else:
         u_label_name = "横ラベル上段"
         d_label_name = "横ラベル下段"
-elif is_microscope:
-    if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
-        u_label_name = "系列名"
-        d_label_name = "横ラベル"
-    else:
-        u_label_name = "横ラベル上段"
-        d_label_name = "横ラベル下段"
+else:
+    u_label_name, d_label_name = "", ""
+
+# ★ ペースト枠専用の案内文字の設定
+if 'WB' in selected_exp or 'qPCR' in selected_exp:
+    paste_t_label = 'Target'
+    paste_l_label = 'Loading Control'
+elif 'HPLC' in selected_exp:
+    paste_t_label = '物質名'
+    paste_l_label = 'タンパク質濃度'
+else:
+    paste_t_label = t_name
+    paste_l_label = l_name
 
 st.markdown("---")
 
@@ -140,13 +147,13 @@ with col_input:
             if is_microscope:
                 c_n, c_t = st.columns(2)
                 with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nCond_A\nCond_A\nCond_B\nCond_B")
-                with c_t: bulk_t = st.text_area(f"2. 【{t_name}】をペースト", height=150)
+                with c_t: bulk_t = st.text_area(f"2. 【{paste_t_label}】をペースト", height=150)
                 bulk_l = ""
             else:
                 c_n, c_t, c_l = st.columns(3)
                 with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC30\nsiNC30\nsiHSPA930")
-                with c_l: bulk_l = st.text_area(f"2. 【{l_name}】をペースト", height=150)
-                with c_t: bulk_t = st.text_area(f"3. 【{t_name}】をペースト", height=150)
+                with c_l: bulk_l = st.text_area(f"2. 【{paste_l_label}】をペースト", height=150)
+                with c_t: bulk_t = st.text_area(f"3. 【{paste_t_label}】をペースト", height=150)
             
             if bulk_n.strip():
                 try:
@@ -201,8 +208,8 @@ with col_input:
                 col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
                 with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                 with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                with col_t: n_t = st.text_area(f'{t_name}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
-                with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
+                with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                with col_l: n_l = st.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
                 input_data.append((n_up, n_down, n_t, n_l))
 
 # ==========================================
@@ -256,7 +263,7 @@ def parse_idx(text, is_alpha=False):
 # ==========================================
 with col_graph:
     st.header("📊 リアルタイムプレビュー")
-    st.info("💡 左の枠にデータを入力すると、右側にグラフが出現します。")
+    st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
         if is_mtt:
@@ -303,8 +310,8 @@ with col_graph:
                 ax_i.minorticks_off()
                 ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
                 
-                ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
-                ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+                ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
+                ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15)
                 indiv_figs.append((plate_names[i], fig_i))
@@ -320,7 +327,7 @@ with col_graph:
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=sds, fmt='none', color=colors[i], capsize=4, lw=1.8)
             
-            has_sig = False
+            plotted_stars = set()
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -328,8 +335,8 @@ with col_graph:
                 if len(col_data_valid) == 2: _, p_val = stats.ttest_ind(col_data_valid[0], col_data_valid[1], equal_var=False)
                 elif len(col_data_valid) >= 3: _, p_val = stats.f_oneway(*col_data_valid)
                 if not np.isnan(p_val) and p_val < 0.05:
-                    has_sig = True
                     stars = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*"
+                    plotted_stars.add(stars)
                     max_y_at_c = max([np.nanmean(d)+np.nanstd(d) for d in col_data_valid])
                     ax.text(conc_vals_plot[idx_c], max_y_at_c + 6, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
@@ -350,9 +357,13 @@ with col_graph:
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15)
 
-            # ★ 有意差の星の説明書き
-            if has_sig:
-                ax.text(1.0, -0.22, "* p < 0.05,  ** p < 0.01,  *** p < 0.001", transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
+            # ★ 有意差の星の説明書き追加
+            if plotted_stars:
+                star_texts = []
+                if "*" in plotted_stars: star_texts.append("* p < 0.05")
+                if "**" in plotted_stars: star_texts.append("** p < 0.01")
+                if "***" in plotted_stars: star_texts.append("*** p < 0.001")
+                ax.text(1.0, -0.22, ",  ".join(star_texts), transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
 
             st.pyplot(fig_comb)
             
@@ -547,8 +558,10 @@ with col_graph:
                 x1, x2 = x_coords[u1], x_coords[u2]
                 sig_pairs.append((min(x1, x2), max(x1, x2), stars))
             
+            plotted_stars = set()
             sig_pairs.sort(key=lambda x: x[1] - x[0])
             for x_start, x_end, stars in sig_pairs:
+                plotted_stars.add(stars)
                 placed_level = -1
                 for l_idx, intervals in enumerate(levels):
                     if not any(not (x_end < s or x_start > e) for s, e in intervals): placed_level = l_idx; break
@@ -586,10 +599,14 @@ with col_graph:
                 
             ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15)
 
-            # ★ 有意差の星の説明書き
-            if sig_pairs:
+            # ★ 有意差の星の説明書き追加
+            if plotted_stars:
                 y_pos = -0.28 if layout_mode == "条件ごとにグループ化" else -0.21
-                ax.text(1.0, y_pos, "* p < 0.05,  ** p < 0.01,  *** p < 0.001", transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
+                star_texts = []
+                if "*" in plotted_stars: star_texts.append("* p < 0.05")
+                if "**" in plotted_stars: star_texts.append("** p < 0.01")
+                if "***" in plotted_stars: star_texts.append("*** p < 0.001")
+                ax.text(1.0, y_pos, ",  ".join(star_texts), transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
 
             st.pyplot(fig)
             
