@@ -42,6 +42,7 @@ is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
+# ラベル設定
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
@@ -119,6 +120,7 @@ with col_input:
             with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=68, key=f"l_{i}")
             input_data.append((n_up, n_down, n_t, n_l))
 
+# ヘルパー関数
 def parse_text(text):
     if not text.strip(): return [np.nan]
     return [float(line.strip()) for line in text.replace(',', '\n').split('\n') if line.strip()]
@@ -149,6 +151,9 @@ with col_graph:
     
     try:
         if is_mtt:
+            # ==========================================
+            # 🟢 MTT 解析ロジック
+            # ==========================================
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
             s_cols.sort()
@@ -171,6 +176,7 @@ with col_graph:
             
             num_p = len(plates_data)
             
+            # --- 個別グラフ描画（裏側でダウンロード用として生成） ---
             indiv_figs = []
             for i in range(num_p):
                 fig_i, ax_i = plt.subplots(figsize=(6, 4))
@@ -194,6 +200,7 @@ with col_graph:
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, fontname='Arial')
                 indiv_figs.append((plate_names[i], fig_i))
 
+            # --- 統合グラフ描画（画面表示＆ダウンロード用） ---
             fig_comb, ax = plt.subplots(figsize=(7, 5))
             fig_comb.patch.set_facecolor('white')
             ax.set_facecolor('white')
@@ -231,8 +238,10 @@ with col_graph:
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15, fontname='Arial')
 
+            # 画面に出力
             st.pyplot(fig_comb)
             
+            # --- 完全版 Excel生成 (MTT) ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 mtt_summary_dict = {"濃度 (Concentration)": [0.0] + [float(x) for x in conc_vals_plot]}
@@ -277,6 +286,7 @@ with col_graph:
                     ws.cell(row=4, column=sc, value="2. グラフ上の線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]")
                     ws.cell(row=5, column=sc, value="3. 『両方向』『キャップ』にし、『カスタム』にチェックを入れ『値の指定』")
                     ws.cell(row=6, column=sc, value="4. 正負両方に、該当条件の『SD』列の数値を指定すれば完成！")
+                    ws.cell(row=7, column=sc, value="※濃度0のControlは対数軸でエラーになるため選択から外すか、微小な値(0.001など)に書き換えてください。")
                 except: pass
 
             st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
@@ -293,7 +303,9 @@ with col_graph:
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
         else:
-            # --- 一般手法 (WB, HPLC, qPCR, 顕微鏡) ---
+            # ==========================================
+            # 🔵 一般手法 (WB, HPLC, qPCR, 顕微鏡) 解析ロジック
+            # ==========================================
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -344,16 +356,16 @@ with col_graph:
             gray_palette = ['black', 'darkgray', 'lightgray', 'dimgray', 'whitesmoke', '#E0E0E0']
             palette = {u: gray_palette[i % len(gray_palette)] for i, u in enumerate(unique_up)} if "色分け" in color_mode else {u: "black" for u in unique_up}
             
-            # ★ グラフの「完璧な」白背景とサイズ指定
+            # --- 完璧なグラフ描画 ---
             fig, ax = plt.subplots(figsize=(max(4.0, len(internal_ids)*1.5+1.5), 5.5))
             fig.patch.set_facecolor('white')
             ax.set_facecolor('white')
             
             x_coords = {}
-            bar_width = 0.17 # ★ 完璧だった時の細い棒のサイズ
+            bar_width = 0.17
             
             if layout_mode == "下段ラベルでグループ化":
-                bar_width = 0.25 # グループ化時は少しだけ太くする
+                bar_width = 0.25 
                 current_x = 0; group_centers = []
                 for low in unique_low:
                     members = [i for i, l in enumerate(lower_labels) if l == low]
@@ -367,13 +379,10 @@ with col_graph:
                 for i, uid in enumerate(internal_ids):
                     x_coords[uid] = float(i)
 
-            # --- 棒グラフ / 箱ひげ図 の描画 ---
             if is_microscope:
                 positions = [x_coords[uid] for uid in internal_ids]
-                box_data = [final_norm[uid] for uid in internal_ids]
-                # 全てをクリーンにするためNaNを除外
-                box_data_clean = [[v for v in d if not np.isnan(v)] for d in box_data]
-                ax.boxplot(box_data_clean, positions=positions, widths=bar_width*1.5, patch_artist=True, 
+                box_data = [[v for v in final_norm[uid] if not np.isnan(v)] for uid in internal_ids]
+                ax.boxplot(box_data, positions=positions, widths=bar_width*1.5, patch_artist=True, 
                            boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
                            capprops=dict(color='black', linewidth=1.2),
                            whiskerprops=dict(color='black', linewidth=1.2),
@@ -383,61 +392,41 @@ with col_graph:
                 for i, uid in enumerate(internal_ids):
                     mean_val = np.nanmean(final_norm[uid])
                     sd_val = np.nanstd(final_norm[uid])
-                    color = palette[upper_labels[i]]
-                    # ★ 完璧だった時のエラーバー指定（ecolor='black', lw=1.2, capsize=3）
                     ax.bar(x_coords[uid], mean_val if not np.isnan(mean_val) else 0, yerr=sd_val if not np.isnan(sd_val) else 0, 
-                           width=bar_width, color=color, edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), 
+                           width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), 
                            label=upper_labels[i] if i == upper_labels.index(upper_labels[i]) else "")
 
-            # ★ 完璧だった時の軸設定（太さ、内向き、ラベルサイズ）
             for spine in ax.spines.values():
-                spine.set_visible(True)
-                spine.set_color('black')
-                spine.set_linewidth(1.5)
+                spine.set_visible(True); spine.set_color('black'); spine.set_linewidth(1.5)
             ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=14)
             ax.tick_params(axis='x', bottom=False, top=False)
             
-            # --- 美しいX軸の2段ラベル描画 ---
             ax.set_xticklabels([]) 
             trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
             
             if layout_mode == "下段ラベルでグループ化" and "色分け" in color_mode:
-                # 色分け時は下段ラベルのみ中央に配置
                 for low in unique_low:
                     members = [i for i, l in enumerate(lower_labels) if l == low]
                     xs = [x_coords[internal_ids[i]] for i in members]
-                    x_center = sum(xs) / len(xs)
-                    ax.text(x_center, -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+                    ax.text(sum(xs) / len(xs), -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
             else:
-                # 上段ラベル配置
                 for i, uid in enumerate(internal_ids):
                     ax.text(x_coords[uid], -0.05, upper_labels[i], ha='center', va='top', transform=trans, fontsize=16, color='black', fontweight='bold')
-                # 下段ラベルとグループ線の配置
                 grouped_lower = [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]
-                line_y = -0.16
-                text_y = -0.21
                 for label, elements in grouped_lower:
                     if not label: continue
-                    indices = [x[0] for x in elements]
-                    xs = [x_coords[internal_ids[i]] for i in indices]
+                    xs = [x_coords[internal_ids[x[0]]] for x in elements]
                     x_start, x_end = min(xs), max(xs)
                     if x_start != x_end:
-                        ax.plot([x_start - bar_width/2, x_end + bar_width/2], [line_y, line_y], color='black', lw=1.5, transform=trans, clip_on=False)
-                    x_center = (x_start + x_end) / 2
-                    ax.text(x_center, text_y, label, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+                        ax.plot([x_start - bar_width/2, x_end + bar_width/2], [-0.16, -0.16], color='black', lw=1.5, transform=trans, clip_on=False)
+                    ax.text((x_start + x_end) / 2, -0.21, label, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
 
-            # --- 有意差ブラケット（完璧だった時の正確な計算式） ---
             all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
             max_y = max(all_vals + [0]) if all_vals else 1.0
             if max_y == 0: max_y = 1.0
             
-            y_shift = max_y * 0.15
-            h = max_y * 0.025
-            base_bracket_y = max_y * 1.15
-            
-            levels = []
-            max_level = 0
-            sig_pairs = []
+            y_shift, h, base_bracket_y = max_y * 0.15, max_y * 0.025, max_y * 1.15
+            levels, max_level, sig_pairs = [], 0, []
             for u1, u2, p in p_pairs:
                 if p >= 0.05 or np.isnan(p): continue
                 stars = "***" if p < 0.001 else "**" if p < 0.01 else "*"
@@ -447,28 +436,18 @@ with col_graph:
             sig_pairs.sort(key=lambda x: x[1] - x[0])
             for x_start, x_end, stars in sig_pairs:
                 placed_level = -1
-                for level_idx, intervals in enumerate(levels):
-                    overlap = False
-                    for (s, e) in intervals:
-                        if not (x_end < s or x_start > e):
-                            overlap = True; break
-                    if not overlap:
-                        placed_level = level_idx; break
-                if placed_level == -1:
-                    placed_level = len(levels)
-                    levels.append([])
+                for l_idx, intervals in enumerate(levels):
+                    if not any(not (x_end < s or x_start > e) for s, e in intervals): placed_level = l_idx; break
+                if placed_level == -1: placed_level = len(levels); levels.append([])
                 levels[placed_level].append((x_start, x_end))
                 max_level = max(max_level, placed_level)
-                bracket_y = base_bracket_y + placed_level * y_shift
-                ax.plot([x_start, x_start, x_end, x_end], [bracket_y - h, bracket_y, bracket_y, bracket_y - h], color='black', lw=1.2)
-                ax.text((x_start + x_end) / 2, bracket_y + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
+                by = base_bracket_y + placed_level * y_shift
+                ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
+                ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
 
-            final_max_y = base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3
-            ax.set_ylim(0, final_max_y)
-            
+            ax.set_ylim(0, base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3)
             x_vals = list(x_coords.values())
             ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
-            
             ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
             
             if "色分け" in color_mode:
@@ -493,6 +472,7 @@ with col_graph:
                 
             ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15, fontname='Arial')
 
+            # 画面に出力
             st.pyplot(fig)
             
             # --- 完全版 Excel生成 (一般手法) ---
@@ -551,7 +531,7 @@ with col_graph:
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
