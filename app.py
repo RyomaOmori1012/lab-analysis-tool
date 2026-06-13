@@ -21,7 +21,8 @@ warnings.filterwarnings('ignore')
 
 # --- フォントのグローバル設定 ---
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'IPAexGothic']
+# ★ 英数はArial、日本語はMS Pゴシックを優先する設定
+plt.rcParams['font.sans-serif'] = ['Arial', 'MS PGothic', 'IPAexGothic']
 plt.rcParams['mathtext.fontset'] = 'custom'
 plt.rcParams['mathtext.rm'] = 'Arial'
 plt.rcParams['mathtext.it'] = 'Arial:italic'
@@ -31,7 +32,7 @@ plt.rcParams['svg.fonttype'] = 'none'
 st.set_page_config(page_title="実験データ自動解析ツール", layout="wide")
 st.title("🧪 実験データ自動解析ツール")
 
-# ★ 追加：テキストエリアの「自動折り返し」を防止し、横スクロールを有効にするCSS
+# テキストエリアの「自動折り返し」を防止し、横スクロールを有効にするCSS
 st.markdown("""
     <style>
     textarea {
@@ -224,12 +225,15 @@ with col_graph:
                 ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
                 for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
-                ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='both')
                 
-                ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
-                ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+                # ★ 細かい目盛りを強制オフ
+                ax_i.minorticks_off()
+                ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
+                
+                ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
+                ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
-                ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, fontname='Arial')
+                ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15)
                 indiv_figs.append((plate_names[i], fig_i))
 
             fig_comb, ax = plt.subplots(figsize=(7, 5))
@@ -252,22 +256,25 @@ with col_graph:
                 if not np.isnan(p_val) and p_val < 0.05:
                     stars = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*"
                     max_y_at_c = max([np.nanmean(d)+np.nanstd(d) for d in col_data_valid])
-                    ax.text(conc_vals_plot[idx_c], max_y_at_c + 6, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', fontname='Arial', color='black')
+                    ax.text(conc_vals_plot[idx_c], max_y_at_c + 6, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log'); ax.set_ylim(bottom=0, top=125)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
             
             for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
-            ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='both')
             
-            ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
-            ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
-            ax.legend(loc='lower left', frameon=False, prop={'family': 'Arial', 'size': 13})
+            # ★ 統合グラフの細かい目盛りも強制オフ
+            ax.minorticks_off()
+            ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
+            
+            ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
+            ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
+            ax.legend(loc='lower left', frameon=False, prop={'size': 13})
             
             mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA (Tukey)" if num_p >= 3 else "MTT Assay"
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
-            ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15, fontname='Arial')
+            ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15)
 
             st.pyplot(fig_comb)
             
@@ -478,7 +485,7 @@ with col_graph:
             if "色分け" in color_mode:
                 handles, labels = ax.get_legend_handles_labels()
                 by_label = dict(zip(labels, handles))
-                if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'family':'Arial', 'size': 12, 'weight': 'bold'})
+                if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
 
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
@@ -495,7 +502,7 @@ with col_graph:
                 elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA (Tukey)"
                 else: test_desc_flat = "Statistical Test"
                 
-            ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15, fontname='Arial')
+            ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15)
 
             st.pyplot(fig)
             
