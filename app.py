@@ -54,11 +54,11 @@ is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
 if 'WB' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的代謝物:', '例: PpIX', '基準(IS):', '例: protein', 'Intracellular Concentration'
 elif 'qPCR' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子(Ct):', '例: 22.5', '内部標準(Ct):', '例: 19.7', 'Relative mRNA level'
 elif is_mtt:
     t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬物:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
@@ -80,12 +80,18 @@ if not is_mtt:
     st.sidebar.header("🖌️ レイアウト・配色設定")
     layout_mode = st.sidebar.radio("棒の配置:", ["均等に並べる", "条件ごとにグループ化"])
     color_mode = st.sidebar.radio("配色:", ["すべて黒", "上段ラベルで色分け（黒/グレー）"])
+    
+    # ★ 棒の太さ調整スライダー機能（他のロジックに影響を与えないよう動的に初期値を変更）
+    default_width = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
+    bar_width_input = st.sidebar.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=default_width, step=0.01)
+    
     pairing_options = ['独立 (Welch・ANOVA等)', 'ノンパラ (Mann-Whitney / Kruskal-Wallis等)'] if is_microscope else ['独立 (Welch・ANOVA等)', '対応あり (Paired等)']
     pairing_mode = st.sidebar.radio('統計検定:', pairing_options)
     norm_mode = st.sidebar.radio('規格化:', ['全体基準 (一番上の条件で全て規格化)', 'グループ基準 (下段ラベル毎の先頭条件で規格化)'])
     test_target_mode = st.sidebar.radio('検定範囲:', ['すべての条件間で検定', 'グループ内でのみ検定 (下段ラベルが同じ条件間)'])
 else:
     layout_mode, color_mode, pairing_mode, norm_mode, test_target_mode = "", "", "", "", ""
+    bar_width_input = 0.17
 
 if not is_mtt:
     if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
@@ -130,6 +136,10 @@ with col_input:
         with c6: mtt_start_conc = st.number_input('開始濃度:', value=4000.0)
         with c7: mtt_dilution = st.number_input('希釈倍率(n倍):', value=2.0)
         with c8: mtt_unit = st.text_input('単位:', 'μM')
+        
+        # ★ 追加：MTT横軸のカスタム目盛り入力欄
+        mtt_custom_xticks = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動のみ）', value='', placeholder='例: 50, 250, 500')
+        
         for i in range(num_cond):
             p_name = st.text_input(f'プレート {i+1} 条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
             p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
@@ -304,6 +314,19 @@ with col_graph:
                 for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
                 
                 ax_i.minorticks_off()
+                
+                # ★ 個別グラフへのカスタム目盛りの追加
+                if mtt_custom_xticks.strip() and len(conc_vals_plot) > 0:
+                    try:
+                        c_ticks = [float(x.strip()) for x in mtt_custom_xticks.split(',') if x.strip()]
+                        low_exp = int(np.floor(np.log10(min(conc_vals_plot))))
+                        high_exp = int(np.ceil(np.log10(max(conc_vals_plot))))
+                        default_ticks = [10**e for e in range(low_exp, high_exp + 1)]
+                        combined_ticks = sorted(list(set(default_ticks + c_ticks + [min(conc_vals_plot), max(conc_vals_plot)])))
+                        combined_ticks = [t for t in combined_ticks if t >= min(conc_vals_plot)*0.8 and t <= max(conc_vals_plot)*1.2]
+                        ax_i.set_xticks(combined_ticks)
+                    except: pass
+                    
                 ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
                 
                 ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
@@ -343,16 +366,31 @@ with col_graph:
             for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
             
             ax.minorticks_off()
+            
+            # ★ 統合グラフへのカスタム目盛りの追加
+            if mtt_custom_xticks.strip() and len(conc_vals_plot) > 0:
+                try:
+                    c_ticks = [float(x.strip()) for x in mtt_custom_xticks.split(',') if x.strip()]
+                    low_exp = int(np.floor(np.log10(min(conc_vals_plot))))
+                    high_exp = int(np.ceil(np.log10(max(conc_vals_plot))))
+                    default_ticks = [10**e for e in range(low_exp, high_exp + 1)]
+                    combined_ticks = sorted(list(set(default_ticks + c_ticks + [min(conc_vals_plot), max(conc_vals_plot)])))
+                    combined_ticks = [t for t in combined_ticks if t >= min(conc_vals_plot)*0.8 and t <= max(conc_vals_plot)*1.2]
+                    ax.set_xticks(combined_ticks)
+                except: pass
+                
             ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
             
             ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
             ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
-            ax.legend(loc='lower left', frameon=False, prop={'size': 13})
+            
+            # ★ 修正：系列が1つの時は凡例を出さない
+            if num_p > 1:
+                ax.legend(loc='lower left', frameon=False, prop={'size': 13})
             
             mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA followed by Tukey's test" if num_p >= 3 else "MTT Assay"
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             
-            # ★ 星の説明をタイトルに組み込む
             star_str = ""
             if plotted_stars:
                 star_texts = []
@@ -485,10 +523,10 @@ with col_graph:
             ax.set_facecolor('white')
             
             x_coords = {}
-            bar_width = 0.17
+            # ★ 固定値からサイドバーのスライダーと連動
+            bar_width = bar_width_input
             
             if layout_mode == "条件ごとにグループ化":
-                bar_width = 0.25 
                 current_x = 0; group_centers = []
                 for low in unique_low:
                     members = [i for i, l in enumerate(lower_labels) if l == low]
@@ -595,7 +633,6 @@ with col_graph:
                 elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA followed by Tukey's test"
                 else: test_desc_flat = "Statistical Test"
                 
-            # ★ 星の説明をタイトルに組み込む
             star_str = ""
             if plotted_stars:
                 star_texts = []
@@ -608,6 +645,14 @@ with col_graph:
                 ax.set_title(f"{test_desc_flat}{star_str}", fontsize=14, pad=15)
             else:
                 ax.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=14, pad=15)
+
+            if plotted_stars:
+                y_pos = -0.28 if layout_mode == "条件ごとにグループ化" else -0.21
+                star_texts = []
+                if "*" in plotted_stars: star_texts.append("* p < 0.05")
+                if "**" in plotted_stars: star_texts.append("** p < 0.01")
+                if "***" in plotted_stars: star_texts.append("*** p < 0.001")
+                ax.text(1.0, y_pos, ",  ".join(star_texts), transform=ax.transAxes, ha='right', va='top', fontsize=12, fontname='Arial')
 
             st.pyplot(fig)
             
@@ -630,7 +675,7 @@ with col_graph:
                     if is_microscope:
                         ws = writer.book['Normalized_Data']
                         ws.cell(row=2, column=4, value="💡 【箱ひげ図の最短作成手順】")
-                        ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
+                        ws.cell(row=3, column=4, value="1. LeftのA列とB列をすべて全選択します。")
                         ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
                     elif layout_mode == "条件ごとにグループ化":
                         matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
@@ -665,7 +710,7 @@ with col_graph:
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
