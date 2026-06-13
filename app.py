@@ -120,7 +120,7 @@ with col_input:
             with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=68, key=f"l_{i}")
             input_data.append((n_up, n_down, n_t, n_l))
 
-# ヘルパー関数 (空欄ならNaNを入れてプレビュー枠を確保する)
+# ヘルパー関数 (空欄ならNaNを入れてプレビュー枠を確保)
 def parse_text(text):
     if not text.strip(): return [np.nan]
     return [float(line.strip()) for line in text.replace(',', '\n').split('\n') if line.strip()]
@@ -147,7 +147,7 @@ def parse_idx(text, is_alpha=False):
 
 with col_graph:
     st.header("📊 リアルタイムプレビュー")
-    st.info("💡 左の枠に文字を打つと、下の「グラフの枠（ラベルや凡例）」が即座に連動します。数値をペーストすると棒が出現します！")
+    st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
         if is_mtt:
@@ -172,6 +172,20 @@ with col_graph:
                 else: plates_data.append((arr - blank_mean) / ctrl_mean * 100)
             
             num_p = len(plates_data)
+            
+            # --- 個別のグラフ作成 (ダウンロード用) ---
+            indiv_figs = []
+            for i in range(num_p):
+                fig_i, ax_i = plt.subplots(figsize=(6, 4))
+                means_i = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+                sds_i = [np.nanstd(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+                ax_i.errorbar(conc_vals_plot, means_i, yerr=sds_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
+                ax_i.set_xscale('log'); ax_i.set_ylim(0, 125); ax_i.set_ylabel(ylabel_input); ax_i.set_xlabel(f"{l_name} [{mtt_unit}]")
+                n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
+                ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, fontname='Arial')
+                indiv_figs.append((plate_names[i], fig_i))
+
+            # --- 統合グラフ作成 (プレビュー＆ダウンロード用) ---
             fig_comb, ax = plt.subplots(figsize=(7, 5))
             colors = sns.color_palette("Set1", max(num_p, 2)) if num_p > 1 else ['black']
             for i in range(num_p):
@@ -180,19 +194,93 @@ with col_graph:
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=sds, fmt='none', color=colors[i], capsize=4)
             
-            ax.set_xscale('log'); ax.set_ylim(0, 125); ax.set_ylabel(ylabel_input); ax.legend()
+            # 統合グラフのp値
+            for idx_c, c in enumerate(s_cols_plot):
+                col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
+                col_data_valid = [d for d in col_data if len(d) > 0]
+                p_val = np.nan
+                if len(col_data_valid) == 2: _, p_val = stats.ttest_ind(col_data_valid[0], col_data_valid[1], equal_var=False)
+                elif len(col_data_valid) >= 3: _, p_val = stats.f_oneway(*col_data_valid)
+                if not np.isnan(p_val) and p_val < 0.05:
+                    stars = "***" if p_val < 0.001 else "**" if p_val < 0.01 else "*"
+                    max_y_at_c = max([np.nanmean(d)+np.nanstd(d) for d in col_data_valid])
+                    ax.text(conc_vals_plot[idx_c], max_y_at_c + 6, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', fontname='Arial', color='black')
+
+            ax.set_xscale('log'); ax.set_ylim(0, 125); ax.set_ylabel(ylabel_input); ax.set_xlabel(f"{l_name} [{mtt_unit}]"); ax.legend()
+            mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA (Tukey)" if num_p >= 3 else "MTT Assay"
+            max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
+            ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15, fontname='Arial')
+
             st.pyplot(fig_comb)
             
-            # Excel生成
+            # --- 完全版 Excel生成 (MTT) ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                # 1. Summary
                 mtt_summary_dict = {"濃度 (Concentration)": [0.0] + [float(x) for x in conc_vals_plot]}
                 for i, p_name in enumerate(plate_names):
                     mtt_summary_dict[f"{p_name}_Mean(%)"] = [100.0] + [float(np.nanmean(plates_data[i][valid_rows, c])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                     mtt_summary_dict[f"{p_name}_SD(%)"] = [float(ctrl_sd_pct_list[i])] + [float(np.nanstd(plates_data[i][valid_rows, c])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 pd.DataFrame(mtt_summary_dict).to_excel(writer, sheet_name='Summary', index=False)
                 
+                # 2. Normalized_Data (Tidy)
+                long_mtt_list = []
+                for i, p_name in enumerate(plate_names):
+                    ctrl_vals = [plates_data[i][r, c] for r in valid_rows for c in c_cols if c not in i_cols]
+                    for val in ctrl_vals:
+                        if not np.isnan(val): long_mtt_list.append({"条件名": f"{p_name}_0_{mtt_unit}", "正規化生存率 (%)": float(val)})
+                    for idx_c, c in enumerate(s_cols_plot):
+                        for val in plates_data[i][valid_rows, c]:
+                            if not np.isnan(val): long_mtt_list.append({"条件名": f"{p_name}_{conc_vals_plot[idx_c]}_{mtt_unit}", "正規化生存率 (%)": float(val)})
+                pd.DataFrame(long_mtt_list).to_excel(writer, sheet_name='Normalized_Data', index=False)
+                
+                # 3. Plate個別の二次元生データ
+                for i in range(num_p):
+                    df_norm = pd.DataFrame(plates_data[i])
+                    df_norm.index = ['A','B','C','D','E','F','G','H']
+                    df_norm.columns = [str(x+1) for x in range(12)]
+                    df_norm.to_excel(writer, sheet_name=re.sub(r'[\\/*?:\[\]]', '', f"Plate_{i+1}_{plate_names[i]}")[:31])
+                
+                # 4. Statistical Details
+                if num_p > 1:
+                    stat_data = []
+                    for idx_c, c in enumerate(s_cols_plot):
+                        conc_str = f"{conc_vals_plot[idx_c]:g}"
+                        col_data_valid = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)] if len(d[~np.isnan(d)]) > 0]
+                        p_val, test_name = np.nan, ""
+                        if len(col_data_valid) == 2: _, p_val = stats.ttest_ind(col_data_valid[0], col_data_valid[1], equal_var=False); test_name = "Welch's t-test"
+                        elif len(col_data_valid) >= 3: _, p_val = stats.f_oneway(*col_data_valid); test_name = "One-way ANOVA"
+                        signif = "***" if p_val<0.001 else "**" if p_val<0.01 else "*" if p_val<0.05 else "ns" if not np.isnan(p_val) else "N/A"
+                        stat_data.append({f"濃度({mtt_unit})": conc_str, "p値": p_val if not np.isnan(p_val) else "N/A", "有意差": signif, "検定手法": test_name or "データ不足"})
+                    if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
+
+                # ガイド追加
+                try:
+                    ws = writer.book['Summary']
+                    sc = len(mtt_summary_dict.keys()) + 2
+                    ws.cell(row=2, column=sc, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
+                    ws.cell(row=3, column=sc, value="1. 左の濃度と各条件の『Mean』の列だけをCtrlキーで選択し、[挿入] ＞ [散布図(直線とマーカー)]")
+                    ws.cell(row=4, column=sc, value="2. グラフ上の線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]")
+                    ws.cell(row=5, column=sc, value="3. 『両方向』『キャップ』にし、『カスタム』にチェックを入れ『値の指定』")
+                    ws.cell(row=6, column=sc, value="4. 正負両方に、該当条件の『SD』列の数値を指定すれば完成！")
+                except: pass
+
+            # --- MTT ダウンロードボタン表示 ---
+            st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+            
+            dl_col1, dl_col2 = st.columns(2)
+            buf_c = io.BytesIO()
+            fig_comb.savefig(buf_c, format='svg', bbox_inches='tight')
+            with dl_col1: st.download_button("📥 統合グラフ(SVG)を保存", buf_c.getvalue(), "Combined_Graph.svg", "image/svg+xml", use_container_width=True)
+            
+            with st.expander("個別プレートのグラフ(SVG)をダウンロード"):
+                for p_name, f in indiv_figs:
+                    buf_i = io.BytesIO()
+                    f.savefig(buf_i, format='svg', bbox_inches='tight')
+                    st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
+
         else:
+            # --- 一般手法 (WB, HPLC, qPCR, 顕微鏡) ---
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -206,12 +294,9 @@ with col_graph:
                 else:
                     u, d, t_text, l_text = item
                     t_nums, l_nums = parse_text(t_text), parse_text(l_text)
-                    
-                    # ユーザーが片方だけ入力中でもエラーを出さずにプレビューを維持
                     length = max(len(t_nums), len(l_nums))
                     t_nums.extend([np.nan] * (length - len(t_nums)))
                     l_nums.extend([np.nan] * (length - len(l_nums)))
-                    
                     if is_qpcr: raw_processed[f"C_{idx}"] = [t - l for t, l in zip(t_nums, l_nums)]
                     else: raw_processed[f"C_{idx}"] = [t / l for t, l in zip(t_nums, l_nums)]
                 
@@ -223,7 +308,7 @@ with col_graph:
             for i, uid in enumerate(internal_ids):
                 c_id = internal_ids[lower_labels.index(lower_labels[i])] if 'グループ' in norm_mode else ctrl_id
                 c_mean = np.nanmean(raw_processed[c_id])
-                if np.isnan(c_mean) or c_mean == 0: c_mean = 1.0 # ゼロ割回避のためのダミー値
+                if np.isnan(c_mean) or c_mean == 0: c_mean = 1.0 
                 
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
@@ -259,7 +344,6 @@ with col_graph:
                         x_coords[internal_ids[i]] = current_x
                         mean_val = np.nanmean(final_norm[internal_ids[i]])
                         sd_val = np.nanstd(final_norm[internal_ids[i]])
-                        # 値がNaNの場合は高さを0にして枠だけ確保
                         ax.bar(current_x, mean_val if not np.isnan(mean_val) else 0, yerr=sd_val if not np.isnan(sd_val) else 0, width=bar_width, color=palette[upper_labels[i]], edgecolor="black", capsize=3, label=upper_labels[i] if i == upper_labels.index(upper_labels[i]) else "")
                         current_x += bar_width
                     group_centers.append((g_start + current_x - bar_width) / 2)
@@ -274,7 +358,6 @@ with col_graph:
                 ax.set_xticks(range(len(internal_ids)))
                 ax.set_xticklabels([f"{u}\n{l}" for u, l in zip(upper_labels, lower_labels)], fontsize=12, fontweight="bold")
 
-            # Y軸のスケール調整
             all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
             max_y = max(all_vals + [0]) if all_vals else 1.0
             if max_y == 0: max_y = 1.0
@@ -298,9 +381,27 @@ with col_graph:
                 by_label = dict(zip(labels, handles))
                 if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
 
+            # ★ タイトルの追加 (検定名とn数)
+            n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
+            expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
+            
+            if is_grouped_test:
+                g_lens = [len([u for u in internal_ids if lower_labels[internal_ids.index(u)] == low]) for low in unique_low]
+                max_g_len = max(g_lens) if g_lens else 0
+                if max_g_len == 2: test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
+                elif max_g_len >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA (Tukey)"
+                else: test_desc_flat = "Statistical Test"
+            else:
+                num_g = len(internal_ids)
+                if num_g == 2: test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
+                elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA (Tukey)"
+                else: test_desc_flat = "Statistical Test"
+                
+            ax.set_title(test_desc_flat if is_microscope else f"{test_desc_flat}, n={expected_n}", fontsize=14, pad=15, fontname='Arial')
+
             st.pyplot(fig)
             
-            # Excel生成
+            # --- 完全版 Excel生成 (一般手法) ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 summary = pd.DataFrame({
@@ -309,12 +410,53 @@ with col_graph:
                     'SD': [np.nanstd(final_norm[u]) for u in internal_ids]
                 })
                 summary.to_excel(writer, sheet_name='Summary', index=False)
+                
+                long_data = [{"条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for i, u in enumerate(internal_ids) for val in final_norm[u] if not np.isnan(val)]
+                pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
+                
                 stats_df = pd.DataFrame([{"比較": f"{u1} vs {u2}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs])
                 stats_df.to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
+                # ★ ガイドとマトリクス表の自動書き込み
+                try:
+                    if is_microscope:
+                        ws = writer.book['Normalized_Data']
+                        ws.cell(row=2, column=4, value="💡 【箱ひげ図の最短作成手順】")
+                        ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
+                        ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
+                    elif layout_mode == "下段ラベルでグループ化":
+                        # グループ化専用のマトリクス表を作成！
+                        matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
+                        matrix_sd = pd.DataFrame(index=unique_up, columns=unique_low)
+                        for i, uid in enumerate(internal_ids):
+                            matrix_mean.at[upper_labels[i], lower_labels[i]] = np.nanmean(final_norm[uid])
+                            matrix_sd.at[upper_labels[i], lower_labels[i]] = np.nanstd(final_norm[uid])
+                        
+                        matrix_mean.to_excel(writer, sheet_name='Summary_Matrix', startrow=1, startcol=0)
+                        matrix_sd.to_excel(writer, sheet_name='Summary_Matrix', startrow=len(unique_up)+4, startcol=0)
+                        
+                        ws = writer.book['Summary_Matrix']
+                        ws.cell(row=1, column=1, value="【平均値 (Mean)】")
+                        ws.cell(row=len(unique_up)+4, column=1, value="【標準偏差 (SD)】")
+                        
+                        sc = len(unique_low) + 3
+                        ws.cell(row=2, column=sc, value="💡 【グループ化棒グラフの最短作成手順】")
+                        ws.cell(row=3, column=sc, value="1. 左上の【平均値】の表(A2から)を丸ごと選択し、[挿入] ＞ [2D 縦棒 (集合縦棒)] をクリック。")
+                        ws.cell(row=4, column=sc, value="2. 追加された棒をクリックし、[誤差範囲] ＞ [その他の誤差範囲オプション] ＞ [カスタム]")
+                        ws.cell(row=5, column=sc, value="3. 値の指定で、下の【標準偏差】の表の該当する行をドラッグして指定すれば完成です！")
+                    else:
+                        ws = writer.book['Summary']
+                        sc = len(summary.columns) + 2
+                        ws.cell(row=2, column=sc, value="💡 【エラーバー(SD)付き棒グラフの最短作成手順】")
+                        ws.cell(row=3, column=sc, value="1. 左の『上段ラベル』と『平均』の列を選択し、[挿入] ＞ [縦棒グラフ] を作成。")
+                        ws.cell(row=4, column=sc, value="2. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
+                        ws.cell(row=5, column=sc, value="3. 『カスタム』にチェックを入れ、『値の指定』。")
+                        ws.cell(row=6, column=sc, value="4. 正負両方に、左の『SD』の数値をドラッグして指定すれば完成！")
+                except: pass
+                
         # --- 共通ダウンロード処理 ---
         buf_svg = io.BytesIO()
-        (fig_comb if is_mtt else fig).savefig(buf_svg, format='svg', bbox_inches='tight')
+        fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
