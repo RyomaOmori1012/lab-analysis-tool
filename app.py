@@ -31,6 +31,17 @@ plt.rcParams['svg.fonttype'] = 'none'
 st.set_page_config(page_title="実験データ自動解析ツール", layout="wide")
 st.title("🧪 実験データ自動解析ツール")
 
+# ★ 追加：テキストエリアの「自動折り返し」を防止し、横スクロールを有効にするCSS
+st.markdown("""
+    <style>
+    textarea {
+        white-space: pre !important;
+        overflow-wrap: normal !important;
+        overflow-x: scroll !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # ==========================================
 # サイドバー設定
 # ==========================================
@@ -101,7 +112,6 @@ with col_input:
         with c8: mtt_unit = st.text_input('単位:', 'μM')
         for i in range(num_cond):
             p_name = st.text_input(f'プレート {i+1} 条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
-            # ★ 高さを220に広げて8x12全体が見えるように修正
             p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
             input_data.append((p_name, p_data))
     elif is_microscope:
@@ -129,7 +139,7 @@ def parse_text(text):
     for line in text.replace(',', '\n').split('\n'):
         if line.strip():
             try: res.append(float(line.strip()))
-            except ValueError: res.append(np.nan) # 文字が混ざっていてもフリーズせず無視
+            except ValueError: res.append(np.nan)
     return res if res else [np.nan]
 
 def parse_plate(text):
@@ -145,10 +155,9 @@ def parse_plate(text):
             if not x: row.append(np.nan)
             else:
                 try: row.append(float(x))
-                except ValueError: row.append(np.nan) # 「OVR」などの文字が入っていても無視
+                except ValueError: row.append(np.nan)
         while len(row) < 12: row.append(np.nan)
         data.append(row[:12])
-    # ユーザーが8行未満しかペーストしなくても、無理やり8行にしてエラーを回避
     while len(data) < 8: data.append([np.nan] * 12)
     return np.array(data[:8])
 
@@ -159,12 +168,12 @@ def parse_idx(text, is_alpha=False):
             if not p: continue
             if '-' in p:
                 start, end = p.split('-')
-                if start and end: # 「2-」のように入力途中でもエラーを出さない
+                if start and end: 
                     res.extend(range(ord(start.upper())-65, ord(end.upper())-65+1) if is_alpha else range(int(start)-1, int(end)))
             else: 
                 res.append(ord(p.upper())-65 if is_alpha else int(p)-1)
     except Exception:
-        pass # 入力中の予期せぬエラーはすべて握りつぶしてフリーズを回避
+        pass 
     return list(set(res))
 
 # ==========================================
@@ -181,7 +190,6 @@ with col_graph:
             s_cols.sort()
             valid_rows = [r for r in range(8) if r not in i_rows]
             
-            # 希釈倍率が0になってゼロ割りエラーになるのを防ぐ
             safe_dilution = mtt_dilution if mtt_dilution != 0 else 1.0
             conc_vals_plot = [mtt_start_conc / (safe_dilution ** i) for i in range(len(s_cols))][::-1]
             s_cols_plot = s_cols[::-1]
@@ -545,8 +553,8 @@ with col_graph:
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
-        pass # 防弾仕様: すべてのエラーを握りつぶし、ユーザーに見せない
+        pass
