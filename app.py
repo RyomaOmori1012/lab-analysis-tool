@@ -42,21 +42,21 @@ is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
-# ラベル設定
+# ★ ラベル設定（ここを修正しました）
 if 'WB' in selected_exp:
-    t_label, t_ph, y_label_def = '目的(Target):', '例: HO-1', 'Relative Band Intensity'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, y_label_def = '目的代謝物:', '例: PpIX', 'Intracellular Concentration'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的代謝物:', '例: PpIX', '基準(IS):', '例: protein', 'Intracellular Concentration'
 elif 'qPCR' in selected_exp:
-    t_label, t_ph, y_label_def = '目的遺伝子:', '例: PDK1', 'Relative mRNA level'
+    t_label, t_ph, l_label, l_ph, y_label_def = '目的遺伝子:', '例: PDK1', '内部標準:', '例: β-ACTIN', 'Relative mRNA level'
 elif is_mtt:
-    t_label, t_ph, y_label_def = '細胞株:', '例: PC3', 'Cell Viability [%]'
+    t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬物:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
-    t_label, t_ph, y_label_def = '観察対象:', '例: ROS / GFP', 'Relative Fluorescence Intensity'
+    t_label, t_ph, l_label, l_ph, y_label_def = '観察対象:', '例: ROS / GFP', '', '', 'Relative Fluorescence Intensity'
 
 c_side1, c_side2 = st.sidebar.columns(2)
 with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
-with c_side2: loading_prot = st.text_input('基準(Loading):' if not is_microscope else '', placeholder='例: HSP90' if not is_microscope else '') if not is_microscope else ""
+with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
 t_name = target_prot.strip() or "Target"
 l_name = loading_prot.strip() or "Loading"
