@@ -42,7 +42,6 @@ is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
 
-# ★ ラベル設定（ここを修正しました）
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = '目的(Target):', '例: HO-1', '基準(Loading):', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
@@ -120,7 +119,6 @@ with col_input:
             with col_l: n_l = st.text_area(f'{l_name}:', placeholder='縦にペースト', height=68, key=f"l_{i}")
             input_data.append((n_up, n_down, n_t, n_l))
 
-# ヘルパー関数 (空欄ならNaNを入れてプレビュー枠を確保)
 def parse_text(text):
     if not text.strip(): return [np.nan]
     return [float(line.strip()) for line in text.replace(',', '\n').split('\n') if line.strip()]
@@ -173,28 +171,40 @@ with col_graph:
             
             num_p = len(plates_data)
             
-            # --- 個別のグラフ作成 (ダウンロード用) ---
             indiv_figs = []
             for i in range(num_p):
                 fig_i, ax_i = plt.subplots(figsize=(6, 4))
+                fig_i.patch.set_facecolor('white')
+                ax_i.set_facecolor('white')
+                
                 means_i = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 sds_i = [np.nanstd(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=sds_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
-                ax_i.set_xscale('log'); ax_i.set_ylim(0, 125); ax_i.set_ylabel(ylabel_input); ax_i.set_xlabel(f"{l_name} [{mtt_unit}]")
+                
+                ax_i.set_xscale('log'); ax_i.set_ylim(bottom=0, top=125)
+                ax_i.yaxis.set_major_locator(ticker.MultipleLocator(20))
+                ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
+                
+                for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
+                ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='both')
+                
+                ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+                ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, fontname='Arial')
                 indiv_figs.append((plate_names[i], fig_i))
 
-            # --- 統合グラフ作成 (プレビュー＆ダウンロード用) ---
             fig_comb, ax = plt.subplots(figsize=(7, 5))
+            fig_comb.patch.set_facecolor('white')
+            ax.set_facecolor('white')
+            
             colors = sns.color_palette("Set1", max(num_p, 2)) if num_p > 1 else ['black']
             for i in range(num_p):
                 means = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 sds = [np.nanstd(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
-                ax.plot(conc_vals_plot, means, '-o', color=colors[i], label=plate_names[i])
-                ax.errorbar(conc_vals_plot, means, yerr=sds, fmt='none', color=colors[i], capsize=4)
+                ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
+                ax.errorbar(conc_vals_plot, means, yerr=sds, fmt='none', color=colors[i], capsize=4, lw=1.8)
             
-            # 統合グラフのp値
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -206,24 +216,31 @@ with col_graph:
                     max_y_at_c = max([np.nanmean(d)+np.nanstd(d) for d in col_data_valid])
                     ax.text(conc_vals_plot[idx_c], max_y_at_c + 6, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', fontname='Arial', color='black')
 
-            ax.set_xscale('log'); ax.set_ylim(0, 125); ax.set_ylabel(ylabel_input); ax.set_xlabel(f"{l_name} [{mtt_unit}]"); ax.legend()
+            ax.set_xscale('log'); ax.set_ylim(bottom=0, top=125)
+            ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
+            ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
+            
+            for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
+            ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='both')
+            
+            ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+            ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+            ax.legend(loc='lower left', frameon=False, prop={'family': 'Arial', 'size': 13})
+            
             mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA (Tukey)" if num_p >= 3 else "MTT Assay"
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             ax.set_title(f"{mtt_test_desc}, n={max_n}", fontsize=14, pad=15, fontname='Arial')
 
             st.pyplot(fig_comb)
             
-            # --- 完全版 Excel生成 (MTT) ---
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                # 1. Summary
                 mtt_summary_dict = {"濃度 (Concentration)": [0.0] + [float(x) for x in conc_vals_plot]}
                 for i, p_name in enumerate(plate_names):
                     mtt_summary_dict[f"{p_name}_Mean(%)"] = [100.0] + [float(np.nanmean(plates_data[i][valid_rows, c])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                     mtt_summary_dict[f"{p_name}_SD(%)"] = [float(ctrl_sd_pct_list[i])] + [float(np.nanstd(plates_data[i][valid_rows, c])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 pd.DataFrame(mtt_summary_dict).to_excel(writer, sheet_name='Summary', index=False)
                 
-                # 2. Normalized_Data (Tidy)
                 long_mtt_list = []
                 for i, p_name in enumerate(plate_names):
                     ctrl_vals = [plates_data[i][r, c] for r in valid_rows for c in c_cols if c not in i_cols]
@@ -234,14 +251,12 @@ with col_graph:
                             if not np.isnan(val): long_mtt_list.append({"条件名": f"{p_name}_{conc_vals_plot[idx_c]}_{mtt_unit}", "正規化生存率 (%)": float(val)})
                 pd.DataFrame(long_mtt_list).to_excel(writer, sheet_name='Normalized_Data', index=False)
                 
-                # 3. Plate個別の二次元生データ
                 for i in range(num_p):
                     df_norm = pd.DataFrame(plates_data[i])
                     df_norm.index = ['A','B','C','D','E','F','G','H']
                     df_norm.columns = [str(x+1) for x in range(12)]
                     df_norm.to_excel(writer, sheet_name=re.sub(r'[\\/*?:\[\]]', '', f"Plate_{i+1}_{plate_names[i]}")[:31])
                 
-                # 4. Statistical Details
                 if num_p > 1:
                     stat_data = []
                     for idx_c, c in enumerate(s_cols_plot):
@@ -254,7 +269,6 @@ with col_graph:
                         stat_data.append({f"濃度({mtt_unit})": conc_str, "p値": p_val if not np.isnan(p_val) else "N/A", "有意差": signif, "検定手法": test_name or "データ不足"})
                     if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
 
-                # ガイド追加
                 try:
                     ws = writer.book['Summary']
                     sc = len(mtt_summary_dict.keys()) + 2
@@ -265,7 +279,6 @@ with col_graph:
                     ws.cell(row=6, column=sc, value="4. 正負両方に、該当条件の『SD』列の数値を指定すれば完成！")
                 except: pass
 
-            # --- MTT ダウンロードボタン表示 ---
             st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             
             dl_col1, dl_col2 = st.columns(2)
@@ -331,57 +344,138 @@ with col_graph:
             gray_palette = ['black', 'darkgray', 'lightgray', 'dimgray', 'whitesmoke', '#E0E0E0']
             palette = {u: gray_palette[i % len(gray_palette)] for i, u in enumerate(unique_up)} if "色分け" in color_mode else {u: "black" for u in unique_up}
             
-            fig, ax = plt.subplots(figsize=(max(6, len(internal_ids)*1.2), 5.5))
-            bar_width = 0.3 if layout_mode == "下段ラベルでグループ化" else 0.6
+            # ★ グラフの「完璧な」白背景とサイズ指定
+            fig, ax = plt.subplots(figsize=(max(4.0, len(internal_ids)*1.5+1.5), 5.5))
+            fig.patch.set_facecolor('white')
+            ax.set_facecolor('white')
+            
             x_coords = {}
+            bar_width = 0.17 # ★ 完璧だった時の細い棒のサイズ
             
             if layout_mode == "下段ラベルでグループ化":
+                bar_width = 0.25 # グループ化時は少しだけ太くする
                 current_x = 0; group_centers = []
                 for low in unique_low:
                     members = [i for i, l in enumerate(lower_labels) if l == low]
                     g_start = current_x
                     for i in members:
                         x_coords[internal_ids[i]] = current_x
-                        mean_val = np.nanmean(final_norm[internal_ids[i]])
-                        sd_val = np.nanstd(final_norm[internal_ids[i]])
-                        ax.bar(current_x, mean_val if not np.isnan(mean_val) else 0, yerr=sd_val if not np.isnan(sd_val) else 0, width=bar_width, color=palette[upper_labels[i]], edgecolor="black", capsize=3, label=upper_labels[i] if i == upper_labels.index(upper_labels[i]) else "")
-                        current_x += bar_width
-                    group_centers.append((g_start + current_x - bar_width) / 2)
+                        current_x += bar_width + 0.02
+                    group_centers.append((g_start + current_x - bar_width - 0.02) / 2)
                     current_x += 0.5
-                ax.set_xticks(group_centers); ax.set_xticklabels(unique_low, fontsize=15, fontweight="bold")
             else:
                 for i, uid in enumerate(internal_ids):
-                    x_coords[uid] = i
+                    x_coords[uid] = float(i)
+
+            # --- 棒グラフ / 箱ひげ図 の描画 ---
+            if is_microscope:
+                positions = [x_coords[uid] for uid in internal_ids]
+                box_data = [final_norm[uid] for uid in internal_ids]
+                # 全てをクリーンにするためNaNを除外
+                box_data_clean = [[v for v in d if not np.isnan(v)] for d in box_data]
+                ax.boxplot(box_data_clean, positions=positions, widths=bar_width*1.5, patch_artist=True, 
+                           boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
+                           capprops=dict(color='black', linewidth=1.2),
+                           whiskerprops=dict(color='black', linewidth=1.2),
+                           medianprops=dict(color='black', linewidth=1.5), 
+                           flierprops=dict(marker='o', markerfacecolor='black', markeredgecolor='black', alpha=0.8, markersize=4))
+            else:
+                for i, uid in enumerate(internal_ids):
                     mean_val = np.nanmean(final_norm[uid])
                     sd_val = np.nanstd(final_norm[uid])
-                    ax.bar(i, mean_val if not np.isnan(mean_val) else 0, yerr=sd_val if not np.isnan(sd_val) else 0, width=bar_width, color=palette[upper_labels[i]], edgecolor="black", capsize=3)
-                ax.set_xticks(range(len(internal_ids)))
-                ax.set_xticklabels([f"{u}\n{l}" for u, l in zip(upper_labels, lower_labels)], fontsize=12, fontweight="bold")
+                    color = palette[upper_labels[i]]
+                    # ★ 完璧だった時のエラーバー指定（ecolor='black', lw=1.2, capsize=3）
+                    ax.bar(x_coords[uid], mean_val if not np.isnan(mean_val) else 0, yerr=sd_val if not np.isnan(sd_val) else 0, 
+                           width=bar_width, color=color, edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), 
+                           label=upper_labels[i] if i == upper_labels.index(upper_labels[i]) else "")
 
+            # ★ 完璧だった時の軸設定（太さ、内向き、ラベルサイズ）
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_color('black')
+                spine.set_linewidth(1.5)
+            ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=14)
+            ax.tick_params(axis='x', bottom=False, top=False)
+            
+            # --- 美しいX軸の2段ラベル描画 ---
+            ax.set_xticklabels([]) 
+            trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
+            
+            if layout_mode == "下段ラベルでグループ化" and "色分け" in color_mode:
+                # 色分け時は下段ラベルのみ中央に配置
+                for low in unique_low:
+                    members = [i for i, l in enumerate(lower_labels) if l == low]
+                    xs = [x_coords[internal_ids[i]] for i in members]
+                    x_center = sum(xs) / len(xs)
+                    ax.text(x_center, -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+            else:
+                # 上段ラベル配置
+                for i, uid in enumerate(internal_ids):
+                    ax.text(x_coords[uid], -0.05, upper_labels[i], ha='center', va='top', transform=trans, fontsize=16, color='black', fontweight='bold')
+                # 下段ラベルとグループ線の配置
+                grouped_lower = [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]
+                line_y = -0.16
+                text_y = -0.21
+                for label, elements in grouped_lower:
+                    if not label: continue
+                    indices = [x[0] for x in elements]
+                    xs = [x_coords[internal_ids[i]] for i in indices]
+                    x_start, x_end = min(xs), max(xs)
+                    if x_start != x_end:
+                        ax.plot([x_start - bar_width/2, x_end + bar_width/2], [line_y, line_y], color='black', lw=1.5, transform=trans, clip_on=False)
+                    x_center = (x_start + x_end) / 2
+                    ax.text(x_center, text_y, label, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+
+            # --- 有意差ブラケット（完璧だった時の正確な計算式） ---
             all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
             max_y = max(all_vals + [0]) if all_vals else 1.0
             if max_y == 0: max_y = 1.0
             
-            y_shift = max_y * 0.12; sig_count = 0
+            y_shift = max_y * 0.15
+            h = max_y * 0.025
+            base_bracket_y = max_y * 1.15
+            
+            levels = []
+            max_level = 0
+            sig_pairs = []
             for u1, u2, p in p_pairs:
                 if p >= 0.05 or np.isnan(p): continue
-                x1, x2 = x_coords[u1], x_coords[u2]; stars = "***" if p < 0.001 else "**" if p < 0.01 else "*"
-                y = max_y * 1.1 + sig_count * y_shift
-                ax.plot([x1, x1, x2, x2], [y - y_shift*0.2, y, y, y - y_shift*0.2], color="black", lw=1.2)
-                ax.text((x1+x2)/2, y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold')
-                sig_count += 1
+                stars = "***" if p < 0.001 else "**" if p < 0.01 else "*"
+                x1, x2 = x_coords[u1], x_coords[u2]
+                sig_pairs.append((min(x1, x2), max(x1, x2), stars))
             
-            ax.set_ylim(0, max_y * (1.3 + sig_count * 0.1))
-            ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold")
-            for s in ax.spines.values(): s.set_linewidth(1.5)
-            ax.tick_params(direction="in", width=1.5, labelsize=14)
+            sig_pairs.sort(key=lambda x: x[1] - x[0])
+            for x_start, x_end, stars in sig_pairs:
+                placed_level = -1
+                for level_idx, intervals in enumerate(levels):
+                    overlap = False
+                    for (s, e) in intervals:
+                        if not (x_end < s or x_start > e):
+                            overlap = True; break
+                    if not overlap:
+                        placed_level = level_idx; break
+                if placed_level == -1:
+                    placed_level = len(levels)
+                    levels.append([])
+                levels[placed_level].append((x_start, x_end))
+                max_level = max(max_level, placed_level)
+                bracket_y = base_bracket_y + placed_level * y_shift
+                ax.plot([x_start, x_start, x_end, x_end], [bracket_y - h, bracket_y, bracket_y, bracket_y - h], color='black', lw=1.2)
+                ax.text((x_start + x_end) / 2, bracket_y + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
+
+            final_max_y = base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3
+            ax.set_ylim(0, final_max_y)
+            
+            x_vals = list(x_coords.values())
+            ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
+            
+            ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
             
             if "色分け" in color_mode:
                 handles, labels = ax.get_legend_handles_labels()
                 by_label = dict(zip(labels, handles))
-                if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
+                if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'family':'Arial', 'size': 12, 'weight': 'bold'})
 
-            # ★ タイトルの追加 (検定名とn数)
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
@@ -414,10 +508,9 @@ with col_graph:
                 long_data = [{"条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for i, u in enumerate(internal_ids) for val in final_norm[u] if not np.isnan(val)]
                 pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
                 
-                stats_df = pd.DataFrame([{"比較": f"{u1} vs {u2}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs])
+                stats_df = pd.DataFrame([{"比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs])
                 stats_df.to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
-                # ★ ガイドとマトリクス表の自動書き込み
                 try:
                     if is_microscope:
                         ws = writer.book['Normalized_Data']
@@ -425,7 +518,6 @@ with col_graph:
                         ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
                         ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
                     elif layout_mode == "下段ラベルでグループ化":
-                        # グループ化専用のマトリクス表を作成！
                         matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
                         matrix_sd = pd.DataFrame(index=unique_up, columns=unique_low)
                         for i, uid in enumerate(internal_ids):
@@ -459,7 +551,7 @@ with col_graph:
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
         
         col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
