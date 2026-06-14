@@ -56,11 +56,11 @@ is_qpcr = 'qPCR' in selected_exp
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration'
+    # ★ 縦軸ラベルのデフォルトを正確に修正
+    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration [nmol / mg ・ protein]'
 elif 'qPCR' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
 elif is_mtt:
-    # ★ 「薬物」を「薬剤名」に変更
     t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬剤名:', '例: ALA', 'Cell Viability [%]'
 elif is_microscope:
     t_label, t_ph, l_label, l_ph, y_label_def = '観察対象:', '例: ROS / GFP', '', '', 'Relative Fluorescence Intensity'
@@ -69,19 +69,8 @@ c_side1, c_side2 = st.sidebar.columns(2)
 with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
 with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
-# ★ 空欄の時のダミー文字（フォールバック）を実験手法ごとに正確に分ける修正
-t_name_raw = target_prot.strip()
-l_name_raw = loading_prot.strip()
-
-if is_mtt:
-    t_name = t_name_raw or "Cell Line"
-    l_name = l_name_raw or "Drug"
-elif is_microscope:
-    t_name = t_name_raw or "Target"
-    l_name = ""
-else:
-    t_name = t_name_raw or "Target"
-    l_name = l_name_raw or "Loading Control"
+t_name = target_prot.strip() or "Target"
+l_name = loading_prot.strip() or "Loading"
 
 if is_mtt or is_microscope: y_label_full = y_label_def
 else: y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
@@ -646,7 +635,6 @@ with col_graph:
                 if "***" in plotted_stars: star_texts.append("*** p < 0.001")
                 star_str = ", " + ", ".join(star_texts)
                 
-            # ★ 右寄せ
             if is_microscope:
                 title_str = f"{test_desc_flat}{star_str}" if test_desc_flat else ""
                 ax.set_title(title_str, fontsize=14, pad=15, loc='right')
