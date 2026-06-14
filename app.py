@@ -240,7 +240,8 @@ with col_input:
                     col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                     with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                    with col_t: n_t = text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                    # ★ 修正: text_area -> st.text_area
+                    with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
                     with col_l: n_l = st.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
                     input_data.append((n_up, n_down, n_t, n_l))
 
@@ -688,6 +689,7 @@ with col_graph:
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
+            # ★ タイトル名と計算ロジックの完全一致化
             max_g_len = max([len(grp) for grp in groupings]) if groupings else 0
             if max_g_len == 2:
                 test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
