@@ -57,7 +57,6 @@ is_hplc = 'HPLC' in selected_exp
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    # ★ 改行コード(\n)を入れて2行に分割しました
     t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration\n[nmol / mg ・ protein]'
 elif 'qPCR' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
@@ -83,7 +82,6 @@ else:
     t_name = t_name_raw or "Target"
     l_name = l_name_raw or "Loading Control"
 
-# ★ HPLCの時は自動で[Target/Loading]を付けないように修正済み
 if is_mtt or is_microscope or is_hplc: 
     y_label_full = y_label_def
 else: 
@@ -141,11 +139,12 @@ with col_input:
 
     if is_mtt:
         c1, c2, c3 = st.columns(3)
-        with c1: mtt_ignore_row = st.text_input('空(除外行):', 'A, H')
-        with c2: mtt_ignore_col = st.text_input('空(除外列):', '1')
-        with c3: mtt_blank_col = st.text_input('Blank(列):', '12')
+        # ★ 指示通りにラベル名を変更
+        with c1: mtt_ignore_row = st.text_input('空のWell(除外行):', 'A, H')
+        with c2: mtt_ignore_col = st.text_input('空のWell(除外列):', '1')
+        with c3: mtt_blank_col = st.text_input('バックグラウンド（培地のみ）(列):', '12')
         c4, c5 = st.columns(2)
-        with c4: mtt_control_col = st.text_input('Control(列):', '11')
+        with c4: mtt_control_col = st.text_input('Control（細胞生存率100%の基準）(列):', '11')
         with c5: mtt_sample_cols = st.text_input('Sample(列):', '2-10')
         c6, c7, c8 = st.columns(3)
         with c6: mtt_start_conc = st.number_input('開始濃度:', value=4000.0)
@@ -652,7 +651,7 @@ with col_graph:
                 
             if is_microscope:
                 title_str = f"{test_desc_flat}{star_str}" if test_desc_flat else ""
-                ax.set_title(title_str, fontsize=14, pad=15, loc='right')
+                if title_str: ax.set_title(title_str, fontsize=14, pad=15, loc='right')
             else:
                 title_str = f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
                 ax.set_title(title_str, fontsize=14, pad=15, loc='right')
