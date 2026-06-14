@@ -120,7 +120,7 @@ if is_mtt or is_microscope or is_hplc:
     y_label_full = y_label_def
 else: 
     if num_targets > 1:
-        y_label_full = f"{y_label_def}" # マルチの時は長くなるので省略
+        y_label_full = f"{y_label_def}"
     else:
         y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
     
@@ -150,7 +150,7 @@ if not is_mtt:
     if num_targets == 1:
         test_target_mode = st.sidebar.radio('検定範囲:', ['すべての条件間で検定', 'グループ内でのみ検定 (下段ラベルが同じ条件間)'])
     else:
-        test_target_mode = 'グループ内でのみ検定' # マルチの場合はターゲット内でのみ比較を強制
+        test_target_mode = 'グループ内でのみ検定'
 else:
     layout_mode, color_mode, pairing_mode, norm_mode, test_target_mode = "", "", "", "", ""
     bar_width_input = 0.17
@@ -445,7 +445,8 @@ with col_graph:
                         ax_i.set_xticks(combined_ticks)
                         ax_i.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
                         ax_i.set_xlim(min_x * 0.8, max_x * 1.2)
-                    except: pass
+                    except Exception:
+                        pass
                 else:
                     ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                     
@@ -472,6 +473,7 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
+            # MTT多重比較補正 (ANOVAプレチェック + 本物のTukey)
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -482,17 +484,23 @@ with col_graph:
                     mtt_test_name = "Welch's t-test"
                 elif len(col_data_valid) >= 3:
                     mtt_test_name = "One-way ANOVA followed by Tukey's test"
+                    p_anova = 1.0
                     try:
                         _, p_anova = stats.f_oneway(*col_data_valid)
-                        if p_anova < 0.05:
-                            all_v, all_g = [], []
-                            for p_idx, d in enumerate(col_data_valid):
-                                all_v.extend(d)
-                                all_g.extend([p_idx] * len(d))
+                    except Exception:
+                        pass
+                        
+                    if p_anova < 0.05:
+                        all_v, all_g = [], []
+                        for p_idx, d in enumerate(col_data_valid):
+                            all_v.extend(d)
+                            all_g.extend([p_idx] * len(d))
+                        try:
                             tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
                             tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
                             min_p = tukey_df['p-adj'].min()
-                    except: pass
+                        except Exception:
+                            pass
 
                 if not np.isnan(min_p) and min_p < 0.05:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
@@ -518,7 +526,8 @@ with col_graph:
                     ax.set_xticks(combined_ticks)
                     ax.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
                     ax.set_xlim(min_x * 0.8, max_x * 1.2)
-                except: pass
+                except Exception:
+                    pass
             else:
                 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
@@ -624,6 +633,7 @@ with col_graph:
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
+            # 棒グラフ側の多重比較補正 (ANOVAチェック + 本物のTukey)
             p_pairs = []
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
@@ -640,23 +650,30 @@ with col_graph:
                     elif is_paired: _, p = stats.ttest_rel(d1, d2)
                     else: _, p = stats.ttest_ind(d1, d2, equal_var=False)
                     p_pairs.append((u1, u2, p))
+                    
                 elif len(valid_uids) >= 3:
                     if not is_non_param and not is_paired:
                         groups_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
+                        p_anova = 1.0
                         try:
                             _, p_anova = stats.f_oneway(*groups_data)
-                            if p_anova < 0.05:
-                                all_v, all_g = [], []
-                                for u in valid_uids:
-                                    d = [v for v in raw_processed[u] if not np.isnan(v)]
-                                    all_v.extend(d)
-                                    all_g.extend([u] * len(d))
-                                if len(all_v) > 0:
+                        except Exception:
+                            pass
+                        
+                        if p_anova < 0.05:
+                            all_v, all_g = [], []
+                            for u in valid_uids:
+                                d = [v for v in raw_processed[u] if not np.isnan(v)]
+                                all_v.extend(d)
+                                all_g.extend([u] * len(d))
+                            if len(all_v) > 0:
+                                try:
                                     tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
                                     tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
                                     for _, row in tukey_df.iterrows():
                                         p_pairs.append((row['group1'], row['group2'], row['p-adj']))
-                        except: pass
+                                except Exception:
+                                    pass
                     else:
                         raw_p, pairs = [], list(combinations(valid_uids, 2))
                         for u1, u2 in pairs:
@@ -664,9 +681,13 @@ with col_graph:
                             if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
                             elif is_paired: _, p = stats.ttest_rel(d1, d2)
                             raw_p.append(p)
-                        _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                        for pair, cp in zip(pairs, corrected_p):
-                            p_pairs.append((pair[0], pair[1], cp))
+                            
+                        try:
+                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                            for pair, cp in zip(pairs, corrected_p):
+                                p_pairs.append((pair[0], pair[1], cp))
+                        except Exception:
+                            pass
 
             unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
@@ -852,7 +873,8 @@ with col_graph:
                         ws.cell(row=4, column=sc, value="2. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
                         ws.cell(row=5, column=sc, value="3. 『カスタム』にチェックを入れ、『値の指定』。")
                         ws.cell(row=6, column=sc, value=f"4. 正負両方に、左の『{err_label}』の数値をドラッグして指定すれば完成！")
-                except: pass
+                except Exception:
+                    pass
                 
         buf_svg = io.BytesIO()
         fig.savefig(buf_svg, format='svg', bbox_inches='tight')
@@ -866,7 +888,7 @@ with col_graph:
         # ==========================================
         else:
             upper_labels, lower_labels, internal_ids = [], [], []
-            raw_processed_multi = {j: {} for j in range(num_targets)} # target_idx -> uid -> values
+            raw_processed_multi = {j: {} for j in range(num_targets)}
             
             for idx, item in enumerate(input_data):
                 u, d, val_t_list, val_l_list = item
@@ -902,19 +924,30 @@ with col_graph:
             
             # 各ターゲットごとに統計計算
             p_pairs_multi = {j: [] for j in range(num_targets)}
+            is_paired = '対応あり' in pairing_mode
+            is_non_param = 'ノンパラ' in pairing_mode
+            
             for j in range(num_targets):
-                groupings = [internal_ids] # マルチターゲット時は「条件ごと(upper_labels)」で比較する
+                groupings = [internal_ids]
                 for grp in groupings:
                     valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
                     if len(valid_uids) == 2:
                         u1, u2 = valid_uids[0], valid_uids[1]
                         d1, d2 = [v for v in raw_processed_multi[j][u1] if not np.isnan(v)], [v for v in raw_processed_multi[j][u2] if not np.isnan(v)]
-                        _, p = stats.ttest_ind(d1, d2, equal_var=False)
+                        if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
+                        elif is_paired: _, p = stats.ttest_rel(d1, d2)
+                        else: _, p = stats.ttest_ind(d1, d2, equal_var=False)
                         p_pairs_multi[j].append((u1, u2, p))
+                        
                     elif len(valid_uids) >= 3:
-                        groups_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
-                        try:
-                            _, p_anova = stats.f_oneway(*groups_data)
+                        if not is_non_param and not is_paired:
+                            groups_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
+                            p_anova = 1.0
+                            try:
+                                _, p_anova = stats.f_oneway(*groups_data)
+                            except Exception:
+                                pass
+                                
                             if p_anova < 0.05:
                                 all_v, all_g = [], []
                                 for u in valid_uids:
@@ -922,11 +955,26 @@ with col_graph:
                                     all_v.extend(d)
                                     all_g.extend([u] * len(d))
                                 if len(all_v) > 0:
-                                    tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
-                                    tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
-                                    for _, row in tukey_df.iterrows():
-                                        p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
-                        except: pass
+                                    try:
+                                        tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
+                                        tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
+                                        for _, row in tukey_df.iterrows():
+                                            p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
+                                    except Exception:
+                                        pass
+                        else:
+                            raw_p, pairs = [], list(combinations(valid_uids, 2))
+                            for u1, u2 in pairs:
+                                d1, d2 = [v for v in raw_processed_multi[j][u1] if not np.isnan(v)], [v for v in raw_processed_multi[j][u2] if not np.isnan(v)]
+                                if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
+                                elif is_paired: _, p = stats.ttest_rel(d1, d2)
+                                raw_p.append(p)
+                            try:
+                                _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                                for pair, cp in zip(pairs, corrected_p):
+                                    p_pairs_multi[j].append((pair[0], pair[1], cp))
+                            except Exception:
+                                pass
 
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
             
@@ -1014,9 +1062,14 @@ with col_graph:
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
             num_g = len(internal_ids)
-            if num_g == 2: test_desc_flat = "Welch's t-test"
-            elif num_g >= 3: test_desc_flat = "One-way ANOVA followed by Tukey's test"
-            else: test_desc_flat = ""
+            if num_g == 2:
+                test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
+            elif num_g >= 3:
+                if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
+                elif is_paired: test_desc_flat = "Paired t-test (Holm)"
+                else: test_desc_flat = "One-way ANOVA followed by Tukey's test"
+            else:
+                test_desc_flat = ""
                 
             star_str = ""
             if plotted_stars:
