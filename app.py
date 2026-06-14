@@ -69,7 +69,7 @@ with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
 with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
 t_name = target_prot.strip() or "Target"
-l_name = loading_prot.strip() or "Loading Control"
+l_name = loading_prot.strip() or "Loading"
 
 if is_mtt or is_microscope: y_label_full = y_label_def
 else: y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
@@ -332,7 +332,7 @@ with col_graph:
                 ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
-                # ★ 右寄せ
+                
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, loc='right')
                 indiv_figs.append((plate_names[i], fig_i))
 
@@ -390,7 +390,8 @@ with col_graph:
             if num_p > 1:
                 ax.legend(loc='lower left', frameon=False, prop={'size': 13})
             
-            mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA followed by Tukey's test" if num_p >= 3 else "MTT Assay"
+            # ★ 条件が1つの場合は検定名を消す
+            mtt_test_desc = "Welch's t-test" if num_p == 2 else "One-way ANOVA followed by Tukey's test" if num_p >= 3 else ""
             max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
             
             star_str = ""
@@ -401,8 +402,10 @@ with col_graph:
                 if "***" in plotted_stars: star_texts.append("*** p < 0.001")
                 star_str = ", " + ", ".join(star_texts)
                 
-            # ★ 右寄せ
-            ax.set_title(f"{mtt_test_desc}{star_str}, n={max_n}", fontsize=14, pad=15, loc='right')
+            if mtt_test_desc:
+                ax.set_title(f"{mtt_test_desc}{star_str}, n={max_n}", fontsize=14, pad=15, loc='right')
+            else:
+                ax.set_title(f"n={max_n}", fontsize=14, pad=15, loc='right')
 
             st.pyplot(fig_comb)
             
@@ -441,6 +444,17 @@ with col_graph:
                         signif = "***" if p_val<0.001 else "**" if p_val<0.01 else "*" if p_val<0.05 else "ns" if not np.isnan(p_val) else "N/A"
                         stat_data.append({f"濃度({mtt_unit})": conc_str, "p値": p_val if not np.isnan(p_val) else "N/A", "有意差": signif, "検定手法": test_name or "データ不足"})
                     if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
+
+                try:
+                    ws = writer.book['Summary']
+                    sc = len(mtt_summary_dict.keys()) + 2
+                    ws.cell(row=2, column=sc, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
+                    ws.cell(row=3, column=sc, value="1. 左の濃度と各条件の『Mean』の列だけをCtrlキーで選択し、[挿入] ＞ [散布図(直線とマーカー)]")
+                    ws.cell(row=4, column=sc, value="2. グラフ上の線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]")
+                    ws.cell(row=5, column=sc, value="3. 『両方向』『キャップ』にし、『カスタム』にチェックを入れ『値の指定』")
+                    ws.cell(row=6, column=sc, value="4. 正負両方に、該当条件の『SD』列の数値を指定すれば完成！")
+                    ws.cell(row=7, column=sc, value="※濃度0のControlは対数軸でエラーになるため選択から外すか、微小な値(0.001など)に書き換えてください。")
+                except: pass
 
             st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             
@@ -612,17 +626,18 @@ with col_graph:
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
+            # ★ 条件が1つの場合は検定名を消す
             if is_grouped_test:
                 g_lens = [len([u for u in internal_ids if lower_labels[internal_ids.index(u)] == low]) for low in unique_low]
                 max_g_len = max(g_lens) if g_lens else 0
                 if max_g_len == 2: test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
                 elif max_g_len >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA followed by Tukey's test"
-                else: test_desc_flat = "Statistical Test"
+                else: test_desc_flat = ""
             else:
                 num_g = len(internal_ids)
                 if num_g == 2: test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
                 elif num_g >= 3: test_desc_flat = "Kruskal-Wallis (Holm)" if is_non_param else "Paired t-test (Holm)" if is_paired else "One-way ANOVA followed by Tukey's test"
-                else: test_desc_flat = "Statistical Test"
+                else: test_desc_flat = ""
                 
             star_str = ""
             if plotted_stars:
@@ -634,9 +649,11 @@ with col_graph:
                 
             # ★ 右寄せ
             if is_microscope:
-                ax.set_title(f"{test_desc_flat}{star_str}", fontsize=14, pad=15, loc='right')
+                title_str = f"{test_desc_flat}{star_str}" if test_desc_flat else ""
+                ax.set_title(title_str, fontsize=14, pad=15, loc='right')
             else:
-                ax.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=14, pad=15, loc='right')
+                title_str = f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
+                ax.set_title(title_str, fontsize=14, pad=15, loc='right')
 
             st.pyplot(fig)
             
