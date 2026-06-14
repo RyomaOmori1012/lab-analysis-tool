@@ -31,7 +31,7 @@ plt.rcParams['svg.fonttype'] = 'none'
 st.set_page_config(page_title="実験データ自動解析ツール", layout="wide")
 st.title("🧪 実験データ自動解析ツール")
 
-# テキストエリアの「自動折り返し」を防止し、横スクロールを有効にするCSS
+# テキストエリアの自動折り返し防止
 st.markdown("""
     <style>
     textarea {
@@ -101,11 +101,9 @@ else:
         loading_names = [l_name_raw or "Loading Control"] * num_targets
         
     st.sidebar.markdown("**ターゲット設定**")
-
     for i in range(num_targets):
         tn = st.sidebar.text_input(f'{t_label} {i+1}:', placeholder=f'Target {i+1}').strip()
         target_names.append(tn or f"Target {i+1}")
-        
         if not is_common_loading and not is_mtt and not is_microscope:
             ln = st.sidebar.text_input(f'{l_label} {i+1}:', placeholder=f'Loading {i+1}').strip()
             loading_names.append(ln or f"Loading {i+1}")
@@ -139,7 +137,6 @@ if not is_mtt:
         layout_mode = st.sidebar.radio("棒の配置:", ["均等に並べる", "条件ごとにグループ化"])
         
     color_mode = st.sidebar.radio("配色:", ["すべて黒", "上段ラベルで色分け（黒/グレー）"])
-    
     default_width = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
     bar_width_input = st.sidebar.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=default_width, step=0.01)
     
@@ -264,9 +261,6 @@ with col_input:
                                 raw_dict[name]['l'][j].extend(l_vals)
 
                     unique_names = list(raw_dict.keys())
-                    
-                    st.markdown("### 🔄 サンプルの整理・並び替え")
-                    st.write("Excelで離れていたサンプルも、**「表示順」**の数字を打ち換えることでグラフ上で隣同士にできます！")
                     
                     mapping_df = pd.DataFrame({
                         "表示順 (1,2,3...)": range(1, len(unique_names) + 1),
@@ -445,8 +439,7 @@ with col_graph:
                         ax_i.set_xticks(combined_ticks)
                         ax_i.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
                         ax_i.set_xlim(min_x * 0.8, max_x * 1.2)
-                    except Exception:
-                        pass
+                    except: pass
                 else:
                     ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                     
@@ -473,7 +466,6 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
-            # MTT多重比較補正 (ANOVAプレチェック + 本物のTukey)
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -484,23 +476,17 @@ with col_graph:
                     mtt_test_name = "Welch's t-test"
                 elif len(col_data_valid) >= 3:
                     mtt_test_name = "One-way ANOVA followed by Tukey's test"
-                    p_anova = 1.0
                     try:
                         _, p_anova = stats.f_oneway(*col_data_valid)
-                    except Exception:
-                        pass
-                        
-                    if p_anova < 0.05:
-                        all_v, all_g = [], []
-                        for p_idx, d in enumerate(col_data_valid):
-                            all_v.extend(d)
-                            all_g.extend([p_idx] * len(d))
-                        try:
+                        if p_anova < 0.05:
+                            all_v, all_g = [], []
+                            for p_idx, d in enumerate(col_data_valid):
+                                all_v.extend(d)
+                                all_g.extend([p_idx] * len(d))
                             tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
                             tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
                             min_p = tukey_df['p-adj'].min()
-                        except Exception:
-                            pass
+                    except: pass
 
                 if not np.isnan(min_p) and min_p < 0.05:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
@@ -526,8 +512,7 @@ with col_graph:
                     ax.set_xticks(combined_ticks)
                     ax.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
                     ax.set_xlim(min_x * 0.8, max_x * 1.2)
-                except Exception:
-                    pass
+                except: pass
             else:
                 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
@@ -633,7 +618,6 @@ with col_graph:
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
-            # 棒グラフ側の多重比較補正 (ANOVAチェック + 本物のTukey)
             p_pairs = []
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
@@ -643,50 +627,56 @@ with col_graph:
 
             for grp in groupings:
                 valid_uids = [u for u in grp if len([v for v in raw_processed[u] if not np.isnan(v)]) >= 2]
+                
                 if len(valid_uids) == 2:
                     u1, u2 = valid_uids[0], valid_uids[1]
                     d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
-                    if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
-                    elif is_paired: _, p = stats.ttest_rel(d1, d2)
-                    else: _, p = stats.ttest_ind(d1, d2, equal_var=False)
+                    p = np.nan
+                    if is_non_param:
+                        _, p = stats.mannwhitneyu(d1, d2)
+                    elif is_paired:
+                        _, p = stats.ttest_rel(d1, d2)
+                    else:
+                        _, p = stats.ttest_ind(d1, d2, equal_var=False)
                     p_pairs.append((u1, u2, p))
                     
                 elif len(valid_uids) >= 3:
-                    if not is_non_param and not is_paired:
+                    is_standard_anova = (not is_non_param) and (not is_paired)
+                    
+                    if is_standard_anova:
                         groups_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
-                        p_anova = 1.0
                         try:
                             _, p_anova = stats.f_oneway(*groups_data)
-                        except Exception:
-                            pass
-                        
-                        if p_anova < 0.05:
-                            all_v, all_g = [], []
-                            for u in valid_uids:
-                                d = [v for v in raw_processed[u] if not np.isnan(v)]
-                                all_v.extend(d)
-                                all_g.extend([u] * len(d))
-                            if len(all_v) > 0:
-                                try:
+                            if p_anova < 0.05:
+                                all_v, all_g = [], []
+                                for u in valid_uids:
+                                    d = [v for v in raw_processed[u] if not np.isnan(v)]
+                                    all_v.extend(d)
+                                    all_g.extend([u] * len(d))
+                                if len(all_v) > 0:
                                     tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
                                     tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
                                     for _, row in tukey_df.iterrows():
                                         p_pairs.append((row['group1'], row['group2'], row['p-adj']))
-                                except Exception:
-                                    pass
-                    else:
-                        raw_p, pairs = [], list(combinations(valid_uids, 2))
+                        except:
+                            pass
+                            
+                    if not is_standard_anova:
+                        raw_p = []
+                        pairs = list(combinations(valid_uids, 2))
                         for u1, u2 in pairs:
                             d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
-                            if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
-                            elif is_paired: _, p = stats.ttest_rel(d1, d2)
+                            p = np.nan
+                            if is_non_param:
+                                _, p = stats.mannwhitneyu(d1, d2)
+                            elif is_paired:
+                                _, p = stats.ttest_rel(d1, d2)
                             raw_p.append(p)
-                            
                         try:
                             _, corrected_p, _, _ = multipletests(raw_p, method='holm')
                             for pair, cp in zip(pairs, corrected_p):
                                 p_pairs.append((pair[0], pair[1], cp))
-                        except Exception:
+                        except:
                             pass
 
             unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
@@ -922,7 +912,6 @@ with col_graph:
                     if is_qpcr: final_norm_multi[j][uid] = [2 ** -(v - c_mean) for v in raw_processed_multi[j][uid]]
                     else: final_norm_multi[j][uid] = [v / c_mean for v in raw_processed_multi[j][uid]]
             
-            # 各ターゲットごとに統計計算
             p_pairs_multi = {j: [] for j in range(num_targets)}
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
@@ -931,49 +920,56 @@ with col_graph:
                 groupings = [internal_ids]
                 for grp in groupings:
                     valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
+                    
                     if len(valid_uids) == 2:
                         u1, u2 = valid_uids[0], valid_uids[1]
                         d1, d2 = [v for v in raw_processed_multi[j][u1] if not np.isnan(v)], [v for v in raw_processed_multi[j][u2] if not np.isnan(v)]
-                        if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
-                        elif is_paired: _, p = stats.ttest_rel(d1, d2)
-                        else: _, p = stats.ttest_ind(d1, d2, equal_var=False)
+                        p = np.nan
+                        if is_non_param:
+                            _, p = stats.mannwhitneyu(d1, d2)
+                        elif is_paired:
+                            _, p = stats.ttest_rel(d1, d2)
+                        else:
+                            _, p = stats.ttest_ind(d1, d2, equal_var=False)
                         p_pairs_multi[j].append((u1, u2, p))
                         
                     elif len(valid_uids) >= 3:
-                        if not is_non_param and not is_paired:
+                        is_standard_anova = (not is_non_param) and (not is_paired)
+                        
+                        if is_standard_anova:
                             groups_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
-                            p_anova = 1.0
                             try:
                                 _, p_anova = stats.f_oneway(*groups_data)
-                            except Exception:
-                                pass
-                                
-                            if p_anova < 0.05:
-                                all_v, all_g = [], []
-                                for u in valid_uids:
-                                    d = [v for v in raw_processed_multi[j][u] if not np.isnan(v)]
-                                    all_v.extend(d)
-                                    all_g.extend([u] * len(d))
-                                if len(all_v) > 0:
-                                    try:
+                                if p_anova < 0.05:
+                                    all_v, all_g = [], []
+                                    for u in valid_uids:
+                                        d = [v for v in raw_processed_multi[j][u] if not np.isnan(v)]
+                                        all_v.extend(d)
+                                        all_g.extend([u] * len(d))
+                                    if len(all_v) > 0:
                                         tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
                                         tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
                                         for _, row in tukey_df.iterrows():
                                             p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
-                                    except Exception:
-                                        pass
-                        else:
-                            raw_p, pairs = [], list(combinations(valid_uids, 2))
+                            except:
+                                pass
+                                
+                        if not is_standard_anova:
+                            raw_p = []
+                            pairs = list(combinations(valid_uids, 2))
                             for u1, u2 in pairs:
                                 d1, d2 = [v for v in raw_processed_multi[j][u1] if not np.isnan(v)], [v for v in raw_processed_multi[j][u2] if not np.isnan(v)]
-                                if is_non_param: _, p = stats.mannwhitneyu(d1, d2)
-                                elif is_paired: _, p = stats.ttest_rel(d1, d2)
+                                p = np.nan
+                                if is_non_param:
+                                    _, p = stats.mannwhitneyu(d1, d2)
+                                elif is_paired:
+                                    _, p = stats.ttest_rel(d1, d2)
                                 raw_p.append(p)
                             try:
                                 _, corrected_p, _, _ = multipletests(raw_p, method='holm')
                                 for pair, cp in zip(pairs, corrected_p):
                                     p_pairs_multi[j].append((pair[0], pair[1], cp))
-                            except Exception:
+                            except:
                                 pass
 
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
