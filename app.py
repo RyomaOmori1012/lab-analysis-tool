@@ -31,6 +31,7 @@ plt.rcParams['svg.fonttype'] = 'none'
 st.set_page_config(page_title="実験データ自動解析ツール", layout="wide")
 st.title("🧪 実験データ自動解析ツール")
 
+# テキストエリアの「自動折り返し」を防止し、横スクロールを有効にするCSS
 st.markdown("""
     <style>
     textarea {
@@ -64,7 +65,6 @@ is_qpcr = 'qPCR' in selected_exp
 is_hplc = 'HPLC' in selected_exp
 is_multi_capable = 'WB' in selected_exp or is_qpcr or is_hplc
 
-# ★ 追加: ターゲット数の選択（マルチ対応の手法のみ）
 if is_multi_capable:
     num_targets = st.sidebar.number_input('ターゲットの数 (1つのグラフにまとめる数):', min_value=1, max_value=10, value=1, step=1)
 else:
@@ -81,23 +81,40 @@ elif is_mtt:
 elif is_microscope:
     t_label, t_ph, l_label, l_ph, y_label_def = '観察対象:', '例: ROS / GFP', '', '', 'Relative Fluorescence Intensity'
 
+is_common_loading = True
 target_names = []
+loading_names = []
+
 if num_targets == 1:
     c_side1, c_side2 = st.sidebar.columns(2)
     with c_side1: t_name_raw = st.text_input(t_label, placeholder=t_ph).strip()
     with c_side2: l_name_raw = st.text_input(l_label, placeholder=l_ph).strip() if not is_microscope else ""
     target_names.append(t_name_raw or ("Cell Line" if is_mtt else "Target"))
+    loading_names.append(l_name_raw or ("Drug" if is_mtt else ("" if is_microscope else "Loading Control")))
 else:
-    l_name_raw = st.sidebar.text_input(l_label, placeholder=l_ph).strip()
-    st.sidebar.markdown("**ターゲット名設定**")
+    if not is_mtt and not is_microscope:
+        loading_mode = st.sidebar.radio("Loading Controlの扱い:", ["共通 (全てのターゲットで同じデータを使用)", "ターゲットごとに個別"])
+        is_common_loading = "共通" in loading_mode
+
+    if is_common_loading and not is_mtt and not is_microscope:
+        l_name_raw = st.sidebar.text_input(f'共通の {l_label}', placeholder=l_ph).strip()
+        loading_names = [l_name_raw or "Loading Control"] * num_targets
+        
+    st.sidebar.markdown("**ターゲット設定**")
+
     for i in range(num_targets):
         tn = st.sidebar.text_input(f'{t_label} {i+1}:', placeholder=f'Target {i+1}').strip()
         target_names.append(tn or f"Target {i+1}")
+        
+        if not is_common_loading and not is_mtt and not is_microscope:
+            ln = st.sidebar.text_input(f'{l_label} {i+1}:', placeholder=f'Loading {i+1}').strip()
+            loading_names.append(ln or f"Loading {i+1}")
+            st.sidebar.markdown("---")
 
 t_name = target_names[0]
-if is_mtt: l_name = l_name_raw or "Drug"
+if is_mtt: l_name = loading_names[0] if loading_names else "Drug"
 elif is_microscope: l_name = ""
-else: l_name = l_name_raw or "Loading Control"
+else: l_name = loading_names[0] if loading_names else "Loading Control"
 
 if is_mtt or is_microscope or is_hplc: 
     y_label_full = y_label_def
@@ -129,6 +146,7 @@ if not is_mtt:
     pairing_options = ['独立 (Welch・ANOVA等)', 'ノンパラ (Mann-Whitney / Kruskal-Wallis等)'] if is_microscope else ['独立 (Welch・ANOVA等)', '対応あり (Paired等)']
     pairing_mode = st.sidebar.radio('統計検定:', pairing_options)
     norm_mode = st.sidebar.radio('規格化:', ['全体基準 (一番上の条件で全て規格化)', 'グループ基準 (下段ラベル毎の先頭条件で規格化)'])
+    
     if num_targets == 1:
         test_target_mode = st.sidebar.radio('検定範囲:', ['すべての条件間で検定', 'グループ内でのみ検定 (下段ラベルが同じ条件間)'])
     else:
@@ -197,35 +215,53 @@ with col_input:
         if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）" and not is_microscope:
             st.info("💡 エクセル上で離れた列にあってもOK！必要な列だけを個別にコピーしてペーストしてください。\nペースト後に出現する表で、離れたサンプルを隣同士に整理できます。")
             
-            # マルチターゲット用の動的レイアウト
-            cols_bulk = st.columns(num_targets + 2)
-            with cols_bulk[0]: bulk_n = st.text_area("1. 【名前】列", height=150, placeholder="例:\nsiNC\nsiNC\nsiHSPA9")
-            with cols_bulk[1]: bulk_l = st.text_area(f"2. 【{paste_l_label}】", height=150)
-            
-            bulk_t_list = []
-            for j in range(num_targets):
-                with cols_bulk[j+2]: 
-                    bulk_t_list.append(st.text_area(f"{j+3}. 【{target_names[j]}】", height=150))
+            if num_targets == 1:
+                c_n, c_l, c_t = st.columns(3)
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiNC\nsiHSPA9")
+                with c_l: bulk_l_single = st.text_area(f"2. 【{paste_l_label}】", height=150)
+                with c_t: bulk_t_single = st.text_area(f"3. 【{paste_t_label}】", height=150)
+                bulk_l_list = [bulk_l_single]
+                bulk_t_list = [bulk_t_single]
+            else:
+                if is_common_loading:
+                    cols_bulk = st.columns(num_targets + 2)
+                    with cols_bulk[0]: bulk_n = st.text_area("1. 【名前】", height=150, placeholder="例:\nsiNC\nsiHSPA9")
+                    with cols_bulk[1]: bulk_l_single = st.text_area(f"2. 共通【{paste_l_label}】", height=150)
+                    bulk_l_list = [bulk_l_single] * num_targets
+                    bulk_t_list = []
+                    for j in range(num_targets):
+                        with cols_bulk[j+2]: 
+                            bulk_t_list.append(st.text_area(f"{j+3}. 【{target_names[j]}】", height=150))
+                else:
+                    st.write("各ターゲットのデータと、対応するLoadingデータをペーストしてください。")
+                    c_n, _ = st.columns([1, 3])
+                    with c_n: bulk_n = st.text_area("1. 【名前】列", height=150, placeholder="例:\nsiNC\nsiHSPA9")
+                    
+                    bulk_t_list = []
+                    bulk_l_list = []
+                    for j in range(num_targets):
+                        ct, cl = st.columns(2)
+                        with ct: bulk_t_list.append(st.text_area(f"【{target_names[j]}】", height=150, key=f"bulk_t_{j}"))
+                        with cl: bulk_l_list.append(st.text_area(f"対応する【{loading_names[j]}】", height=150, key=f"bulk_l_{j}"))
             
             if bulk_n.strip():
                 try:
                     n_lines = [line.strip() for line in bulk_n.replace('\r', '').split('\n') if line.strip()]
-                    l_lines = [line.strip() for line in bulk_l.replace('\r', '').split('\n') if line.strip()] if bulk_l.strip() else []
                     t_lines_list = [[line.strip() for line in b.replace('\r', '').split('\n') if line.strip()] if b.strip() else [] for b in bulk_t_list]
+                    l_lines_list = [[line.strip() for line in b.replace('\r', '').split('\n') if line.strip()] if b.strip() else [] for b in bulk_l_list]
 
                     raw_dict = {}
                     for i, name in enumerate(n_lines):
                         if not name: continue
-                        if name not in raw_dict: raw_dict[name] = {'t': [[] for _ in range(num_targets)], 'l': []}
+                        if name not in raw_dict: raw_dict[name] = {'t': [[] for _ in range(num_targets)], 'l': [[] for _ in range(num_targets)]}
                         
-                        if i < len(l_lines):
-                            l_vals = [float(x) for x in re.sub(r'[\s,]+', ',', l_lines[i]).split(',') if x.strip()]
-                            raw_dict[name]['l'].extend(l_vals)
-                            
                         for j in range(num_targets):
                             if i < len(t_lines_list[j]):
                                 t_vals = [float(x) for x in re.sub(r'[\s,]+', ',', t_lines_list[j][i]).split(',') if x.strip()]
                                 raw_dict[name]['t'][j].extend(t_vals)
+                            if i < len(l_lines_list[j]):
+                                l_vals = [float(x) for x in re.sub(r'[\s,]+', ',', l_lines_list[j][i]).split(',') if x.strip()]
+                                raw_dict[name]['l'][j].extend(l_vals)
 
                     unique_names = list(raw_dict.keys())
                     
@@ -248,11 +284,12 @@ with col_input:
                         d_label = str(row[f"{d_label_name} (空欄可)"]) if pd.notna(row[f"{d_label_name} (空欄可)"]) and str(row[f"{d_label_name} (空欄可)"]).strip() else ""
                         
                         t_data_texts = []
+                        l_data_texts = []
                         for j in range(num_targets):
                             t_data_texts.append('\n'.join(map(str, raw_dict[orig_name]['t'][j])))
-                        l_data = '\n'.join(map(str, raw_dict[orig_name]['l']))
+                            l_data_texts.append('\n'.join(map(str, raw_dict[orig_name]['l'][j])))
                         
-                        input_data.append((u_label, d_label, t_data_texts, l_data))
+                        input_data.append((u_label, d_label, t_data_texts, l_data_texts))
                             
                 except Exception as e:
                     st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
@@ -264,16 +301,36 @@ with col_input:
                     with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                     with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
                     input_data.append((n_up, n_down, [n_t]))
+                elif num_targets == 1:
+                    col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
+                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                    with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                    with col_l: n_l = st.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
+                    with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                    input_data.append((n_up, n_down, [n_t], [n_l]))
                 else:
-                    cols_manual = st.columns([1, 1, 1.5] + [1.5]*num_targets)
-                    with cols_manual[0]: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-                    with cols_manual[1]: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                    with cols_manual[2]: n_l = st.text_area(f'{paste_l_label}:', placeholder='ペースト', height=100, key=f"l_{i}")
-                    n_t_list = []
-                    for j in range(num_targets):
-                        with cols_manual[3+j]:
-                            n_t_list.append(st.text_area(f'{target_names[j]}:', placeholder='ペースト', height=100, key=f"t_{i}_{j}"))
-                    input_data.append((n_up, n_down, n_t_list, n_l))
+                    st.markdown(f"**条件 {i+1}**")
+                    col_up, col_dn = st.columns(2)
+                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                    with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                    
+                    if is_common_loading:
+                        cols_manual = st.columns([1.5] + [1.5]*num_targets)
+                        with cols_manual[0]: n_l = st.text_area(f'共通の {paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
+                        n_l_list = [n_l] * num_targets
+                        n_t_list = []
+                        for j in range(num_targets):
+                            with cols_manual[1+j]:
+                                n_t_list.append(st.text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}"))
+                    else:
+                        n_t_list = []
+                        n_l_list = []
+                        for j in range(num_targets):
+                            ct, cl = st.columns(2)
+                            with ct: n_t_list.append(st.text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}"))
+                            with cl: n_l_list.append(st.text_area(f'対応する {loading_names[j]}:', placeholder='縦にペースト', height=100, key=f"l_{i}_{j}"))
+                    
+                    input_data.append((n_up, n_down, n_t_list, n_l_list))
 
 # ==========================================
 # 🛡️ エラー完全回避(防弾)ヘルパー関数
@@ -330,7 +387,6 @@ with col_graph:
     
     try:
         if is_mtt:
-            # (MTTのロジックは今まで通り完全維持)
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
             s_cols.sort()
@@ -416,7 +472,6 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
-            # MTT多重比較補正 (ANOVAプレチェック + 本物のTukey)
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -530,9 +585,8 @@ with col_graph:
                     f.savefig(buf_i, format='svg', bbox_inches='tight')
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
-
         # ==========================================
-        # 👑 ターゲット1つの場合（完全維持・無傷のロジック）
+        # 👑 ターゲット1つの場合
         # ==========================================
         elif num_targets == 1:
             is_paired = '対応あり' in pairing_mode
@@ -546,8 +600,8 @@ with col_graph:
                     u, d, val_t_list = item
                     raw_processed[f"C_{idx}"] = parse_text(val_t_list[0])
                 else:
-                    u, d, val_t_list, l_text = item
-                    t_nums, l_nums = parse_text(val_t_list[0]), parse_text(l_text)
+                    u, d, val_t_list, val_l_list = item
+                    t_nums, l_nums = parse_text(val_t_list[0]), parse_text(val_l_list[0])
                     length = max(len(t_nums), len(l_nums))
                     t_nums.extend([np.nan] * (length - len(t_nums)))
                     l_nums.extend([np.nan] * (length - len(l_nums)))
@@ -765,12 +819,47 @@ with col_graph:
                 stats_df = pd.DataFrame([{"比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs])
                 stats_df.to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
-            st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
-            
-            col_dl1, col_dl2 = st.columns(2)
-            buf_svg = io.BytesIO()
-            fig.savefig(buf_svg, format='svg', bbox_inches='tight')
-            with col_dl1: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
+                try:
+                    if is_microscope:
+                        ws = writer.book['Normalized_Data']
+                        ws.cell(row=2, column=4, value="💡 【箱ひげ図の最短作成手順】")
+                        ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
+                        ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
+                    elif layout_mode == "条件ごとにグループ化":
+                        matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
+                        matrix_sd = pd.DataFrame(index=unique_up, columns=unique_low)
+                        for i, uid in enumerate(internal_ids):
+                            matrix_mean.at[upper_labels[i], lower_labels[i]] = np.nanmean(final_norm[uid])
+                            matrix_sd.at[upper_labels[i], lower_labels[i]] = calc_error(final_norm[uid], error_bar_type)
+                        
+                        matrix_mean.to_excel(writer, sheet_name='Summary_Matrix', startrow=1, startcol=0)
+                        matrix_sd.to_excel(writer, sheet_name='Summary_Matrix', startrow=len(unique_up)+4, startcol=0)
+                        
+                        ws = writer.book['Summary_Matrix']
+                        ws.cell(row=1, column=1, value="【平均値 (Mean)】")
+                        ws.cell(row=len(unique_up)+4, column=1, value=f"【{err_label}】")
+                        
+                        sc = len(unique_low) + 3
+                        ws.cell(row=2, column=sc, value="💡 【グループ化棒グラフの最短作成手順】")
+                        ws.cell(row=3, column=sc, value="1. 左上の【平均値】の表(A2から)を丸ごと選択し、[挿入] ＞ [2D 縦棒 (集合縦棒)] をクリック。")
+                        ws.cell(row=4, column=sc, value="2. 追加された棒をクリックし、[誤差範囲] ＞ [その他の誤差範囲オプション] ＞ [カスタム]")
+                        ws.cell(row=5, column=sc, value=f"3. 値の指定で、下の【{err_label}】の表の該当する行をドラッグして指定すれば完成です！")
+                    else:
+                        ws = writer.book['Summary']
+                        sc = len(summary.columns) + 2
+                        ws.cell(row=2, column=sc, value="💡 【エラーバー付き棒グラフの最短作成手順】")
+                        ws.cell(row=3, column=sc, value="1. 左の『上段ラベル』と『平均』の列を選択し、[挿入] ＞ [縦棒グラフ] を作成。")
+                        ws.cell(row=4, column=sc, value="2. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
+                        ws.cell(row=5, column=sc, value="3. 『カスタム』にチェックを入れ、『値の指定』。")
+                        ws.cell(row=6, column=sc, value=f"4. 正負両方に、左の『{err_label}』の数値をドラッグして指定すれば完成！")
+                except: pass
+                
+        buf_svg = io.BytesIO()
+        fig.savefig(buf_svg, format='svg', bbox_inches='tight')
+        
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
         # ==========================================
         # 🚀 ターゲット複数（マルチターゲット）の場合
@@ -780,11 +869,11 @@ with col_graph:
             raw_processed_multi = {j: {} for j in range(num_targets)} # target_idx -> uid -> values
             
             for idx, item in enumerate(input_data):
-                u, d, val_t_list, l_text = item
-                l_nums = parse_text(l_text)
+                u, d, val_t_list, val_l_list = item
                 
                 for j in range(num_targets):
                     t_nums = parse_text(val_t_list[j])
+                    l_nums = parse_text(val_l_list[j])
                     length = max(len(t_nums), len(l_nums))
                     t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
                     l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
@@ -872,7 +961,7 @@ with col_graph:
                     current_x += bar_width + 0.02
                 
                 target_centers.append((g_start + current_x - bar_width - 0.02) / 2)
-                current_x += 0.8 # グループ（ターゲット）間の隙間
+                current_x += 0.8
 
             for spine in ax.spines.values():
                 spine.set_visible(True); spine.set_color('black'); spine.set_linewidth(1.5)
