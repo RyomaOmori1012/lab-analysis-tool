@@ -158,7 +158,6 @@ with col_input:
             p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
             input_data.append((p_name, p_data))
     else:
-        # ★ 修正：蛍光顕微鏡の時はラジオボタンを出さず、手動モードのみに固定
         if is_microscope:
             input_mode = "手動で1条件ずつ入力"
         else:
@@ -218,7 +217,6 @@ with col_input:
                     st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
         else:
             for i in range(num_cond):
-                # ★ 修正：蛍光顕微鏡の時は1枠のみ（横幅3.0）に綺麗に整列、 Loading枠を非表示に
                 if is_microscope:
                     col_up, col_dn, col_t = st.columns([1, 1, 3.0])
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
@@ -517,7 +515,7 @@ with col_graph:
             
             p_pairs = []
             for u1, u2 in combinations(internal_ids, 2):
-                if is_grouped_test && lower_labels[internal_ids.index(u1)] != lower_labels[internal_ids.index(u2)]: continue
+                if is_grouped_test and lower_labels[internal_ids.index(u1)] != lower_labels[internal_ids.index(u2)]: continue
                 d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
                 if len(d1) < 2 or len(d2) < 2:
                     p_pairs.append((u1, u2, np.nan)); continue
