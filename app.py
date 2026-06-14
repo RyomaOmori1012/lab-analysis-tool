@@ -150,7 +150,6 @@ with col_input:
         with c7: mtt_dilution = st.number_input('希釈倍率(n倍):', value=2.0)
         with c8: mtt_unit = st.text_input('単位:', 'μM')
         
-        # ★ 追加：濃度の配置方向の切り替えスイッチ
         mtt_conc_direction = st.radio("濃度の配置方向:", ["左が高濃度 (右へ希釈)", "右が高濃度 (左へ希釈)"], horizontal=True)
         mtt_custom_xticks = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250')
         
@@ -159,21 +158,19 @@ with col_input:
             p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
             input_data.append((p_name, p_data))
     else:
-        input_mode = st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True)
+        # ★ 修正：蛍光顕微鏡の時はラジオボタンを出さず、手動モードのみに固定
+        if is_microscope:
+            input_mode = "手動で1条件ずつ入力"
+        else:
+            input_mode = st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True)
         
-        if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）":
+        if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）" and not is_microscope:
             st.info("💡 エクセル上で離れた列にあってもOK！必要な列だけを個別にコピーしてペーストしてください。\nペースト後に出現する表で、離れたサンプルを隣同士に整理できます。")
             
-            if is_microscope:
-                c_n, c_t = st.columns(2)
-                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nCond_A\nCond_A\nCond_B\nCond_B")
-                with c_t: bulk_t = st.text_area(f"2. 【{paste_t_label}】をペースト", height=150)
-                bulk_l = ""
-            else:
-                c_n, c_t, c_l = st.columns(3)
-                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC30\nsiNC30\nsiHSPA930")
-                with c_l: bulk_l = st.text_area(f"2. 【{paste_l_label}】をペースト", height=150)
-                with c_t: bulk_t = st.text_area(f"3. 【{paste_t_label}】をペースト", height=150)
+            c_n, c_t, c_l = st.columns(3)
+            with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC30\nsiNC30\nsiHSPA930")
+            with c_l: bulk_l = st.text_area(f"2. 【{paste_l_label}】をペースト", height=150)
+            with c_t: bulk_t = st.text_area(f"3. 【{paste_t_label}】をペースト", height=150)
             
             if bulk_n.strip():
                 try:
@@ -189,7 +186,7 @@ with col_input:
                         if i < len(t_lines):
                             t_vals = [float(x) for x in re.sub(r'[\s,]+', ',', t_lines[i]).split(',') if x.strip()]
                             raw_dict[name]['t'].extend(t_vals)
-                        if not is_microscope and i < len(l_lines):
+                        if i < len(l_lines):
                             l_vals = [float(x) for x in re.sub(r'[\s,]+', ',', l_lines[i]).split(',') if x.strip()]
                             raw_dict[name]['l'].extend(l_vals)
 
@@ -214,23 +211,27 @@ with col_input:
                         d_label = str(row[f"{d_label_name} (空欄可)"]) if pd.notna(row[f"{d_label_name} (空欄可)"]) and str(row[f"{d_label_name} (空欄可)"]).strip() else ""
                         
                         t_data = '\n'.join(map(str, raw_dict[orig_name]['t']))
-                        
-                        if is_microscope:
-                            input_data.append((u_label, d_label, t_data))
-                        else:
-                            l_data = '\n'.join(map(str, raw_dict[orig_name]['l']))
-                            input_data.append((u_label, d_label, t_data, l_data))
+                        l_data = '\n'.join(map(str, raw_dict[orig_name]['l']))
+                        input_data.append((u_label, d_label, t_data, l_data))
                             
                 except Exception as e:
                     st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
         else:
             for i in range(num_cond):
-                col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
-                with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-                with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
-                with col_l: n_l = st.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
-                input_data.append((n_up, n_down, n_t, n_l))
+                # ★ 修正：蛍光顕微鏡の時は1枠のみ（横幅3.0）に綺麗に整列、 Loading枠を非表示に
+                if is_microscope:
+                    col_up, col_dn, col_t = st.columns([1, 1, 3.0])
+                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                    with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                    with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                    input_data.append((n_up, n_down, n_t))
+                else:
+                    col_up, col_dn, col_t, col_l = st.columns([1, 1, 1.5, 1.5])
+                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                    with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                    with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                    with col_l: n_l = st.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")
+                    input_data.append((n_up, n_down, n_t, n_l))
 
 # ==========================================
 # 🛡️ エラー完全回避(防弾)ヘルパー関数
@@ -293,8 +294,6 @@ with col_graph:
             valid_rows = [r for r in range(8) if r not in i_rows]
             
             safe_dilution = mtt_dilution if mtt_dilution != 0 else 1.0
-            
-            # ★ 濃度の配置方向を動的に処理
             conc_vals_plot = [mtt_start_conc / (safe_dilution ** i) for i in range(len(s_cols))][::-1]
             
             if "左が高濃度" in mtt_conc_direction:
@@ -518,7 +517,7 @@ with col_graph:
             
             p_pairs = []
             for u1, u2 in combinations(internal_ids, 2):
-                if is_grouped_test and lower_labels[internal_ids.index(u1)] != lower_labels[internal_ids.index(u2)]: continue
+                if is_grouped_test && lower_labels[internal_ids.index(u1)] != lower_labels[internal_ids.index(u2)]: continue
                 d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
                 if len(d1) < 2 or len(d2) < 2:
                     p_pairs.append((u1, u2, np.nan)); continue
