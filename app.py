@@ -139,7 +139,6 @@ with col_input:
 
     if is_mtt:
         c1, c2, c3 = st.columns(3)
-        # ★ 指示通りにラベル名を変更
         with c1: mtt_ignore_row = st.text_input('空のWell(除外行):', 'A, H')
         with c2: mtt_ignore_col = st.text_input('空のWell(除外列):', '1')
         with c3: mtt_blank_col = st.text_input('バックグラウンド（培地のみ）(列):', '12')
@@ -151,6 +150,8 @@ with col_input:
         with c7: mtt_dilution = st.number_input('希釈倍率(n倍):', value=2.0)
         with c8: mtt_unit = st.text_input('単位:', 'μM')
         
+        # ★ 追加：濃度の配置方向の切り替えスイッチ
+        mtt_conc_direction = st.radio("濃度の配置方向:", ["左が高濃度 (右へ希釈)", "右が高濃度 (左へ希釈)"], horizontal=True)
         mtt_custom_xticks = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250')
         
         for i in range(num_cond):
@@ -292,8 +293,14 @@ with col_graph:
             valid_rows = [r for r in range(8) if r not in i_rows]
             
             safe_dilution = mtt_dilution if mtt_dilution != 0 else 1.0
+            
+            # ★ 濃度の配置方向を動的に処理
             conc_vals_plot = [mtt_start_conc / (safe_dilution ** i) for i in range(len(s_cols))][::-1]
-            s_cols_plot = s_cols[::-1]
+            
+            if "左が高濃度" in mtt_conc_direction:
+                s_cols_plot = s_cols[::-1]
+            else:
+                s_cols_plot = s_cols
             
             plates_data, plate_names, ctrl_sd_pct_list = [], [], []
             for idx, (pn, pd_text) in enumerate(input_data):
