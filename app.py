@@ -69,7 +69,7 @@ with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
 with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
 t_name = target_prot.strip() or "Target"
-l_name = loading_prot.strip() or "Loading"
+l_name = loading_prot.strip() or "Loading Control"
 
 if is_mtt or is_microscope: y_label_full = y_label_def
 else: y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
@@ -332,7 +332,8 @@ with col_graph:
                 ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
-                ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15)
+                # ★ 右寄せ
+                ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, loc='right')
                 indiv_figs.append((plate_names[i], fig_i))
 
             fig_comb, ax = plt.subplots(figsize=(7, 5))
@@ -400,7 +401,8 @@ with col_graph:
                 if "***" in plotted_stars: star_texts.append("*** p < 0.001")
                 star_str = ", " + ", ".join(star_texts)
                 
-            ax.set_title(f"{mtt_test_desc}{star_str}, n={max_n}", fontsize=14, pad=15)
+            # ★ 右寄せ
+            ax.set_title(f"{mtt_test_desc}{star_str}, n={max_n}", fontsize=14, pad=15, loc='right')
 
             st.pyplot(fig_comb)
             
@@ -439,17 +441,6 @@ with col_graph:
                         signif = "***" if p_val<0.001 else "**" if p_val<0.01 else "*" if p_val<0.05 else "ns" if not np.isnan(p_val) else "N/A"
                         stat_data.append({f"濃度({mtt_unit})": conc_str, "p値": p_val if not np.isnan(p_val) else "N/A", "有意差": signif, "検定手法": test_name or "データ不足"})
                     if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
-
-                try:
-                    ws = writer.book['Summary']
-                    sc = len(mtt_summary_dict.keys()) + 2
-                    ws.cell(row=2, column=sc, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
-                    ws.cell(row=3, column=sc, value="1. 左の濃度と各条件の『Mean』の列だけをCtrlキーで選択し、[挿入] ＞ [散布図(直線とマーカー)]")
-                    ws.cell(row=4, column=sc, value="2. グラフ上の線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]")
-                    ws.cell(row=5, column=sc, value="3. 『両方向』『キャップ』にし、『カスタム』にチェックを入れ『値の指定』")
-                    ws.cell(row=6, column=sc, value="4. 正負両方に、該当条件の『SD』列の数値を指定すれば完成！")
-                    ws.cell(row=7, column=sc, value="※濃度0のControlは対数軸でエラーになるため選択から外すか、微小な値(0.001など)に書き換えてください。")
-                except: pass
 
             st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             
@@ -641,10 +632,11 @@ with col_graph:
                 if "***" in plotted_stars: star_texts.append("*** p < 0.001")
                 star_str = ", " + ", ".join(star_texts)
                 
+            # ★ 右寄せ
             if is_microscope:
-                ax.set_title(f"{test_desc_flat}{star_str}", fontsize=14, pad=15)
+                ax.set_title(f"{test_desc_flat}{star_str}", fontsize=14, pad=15, loc='right')
             else:
-                ax.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=14, pad=15)
+                ax.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=14, pad=15, loc='right')
 
             st.pyplot(fig)
             
