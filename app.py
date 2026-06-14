@@ -57,7 +57,8 @@ is_hplc = 'HPLC' in selected_exp
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration [nmol / mg ・ protein]'
+    # ★ 改行コード(\n)を入れて2行に分割しました
+    t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration\n[nmol / mg ・ protein]'
 elif 'qPCR' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
 elif is_mtt:
@@ -82,7 +83,7 @@ else:
     t_name = t_name_raw or "Target"
     l_name = l_name_raw or "Loading Control"
 
-# ★ HPLCの時は自動で[Target/Loading]を付けないように修正
+# ★ HPLCの時は自動で[Target/Loading]を付けないように修正済み
 if is_mtt or is_microscope or is_hplc: 
     y_label_full = y_label_def
 else: 
