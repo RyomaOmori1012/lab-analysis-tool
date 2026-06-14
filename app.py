@@ -52,11 +52,11 @@ num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=
 is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
 is_qpcr = 'qPCR' in selected_exp
+is_hplc = 'HPLC' in selected_exp
 
 if 'WB' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
 elif 'HPLC' in selected_exp:
-    # ★ 縦軸ラベルのデフォルトを正確に修正
     t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration [nmol / mg ・ protein]'
 elif 'qPCR' in selected_exp:
     t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
@@ -69,11 +69,25 @@ c_side1, c_side2 = st.sidebar.columns(2)
 with c_side1: target_prot = st.text_input(t_label, placeholder=t_ph)
 with c_side2: loading_prot = st.text_input(l_label, placeholder=l_ph) if not is_microscope else ""
 
-t_name = target_prot.strip() or "Target"
-l_name = loading_prot.strip() or "Loading"
+t_name_raw = target_prot.strip()
+l_name_raw = loading_prot.strip()
 
-if is_mtt or is_microscope: y_label_full = y_label_def
-else: y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
+if is_mtt:
+    t_name = t_name_raw or "Cell Line"
+    l_name = l_name_raw or "Drug"
+elif is_microscope:
+    t_name = t_name_raw or "Target"
+    l_name = ""
+else:
+    t_name = t_name_raw or "Target"
+    l_name = l_name_raw or "Loading Control"
+
+# ★ HPLCの時は自動で[Target/Loading]を付けないように修正
+if is_mtt or is_microscope or is_hplc: 
+    y_label_full = y_label_def
+else: 
+    y_label_full = f"{y_label_def}\n[{t_name} / {l_name}]"
+    
 ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height=68)
 
 if not is_mtt:
