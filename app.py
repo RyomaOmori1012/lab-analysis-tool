@@ -381,6 +381,9 @@ with col_graph:
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
+        # ---------------------------------------------------------
+        # パターン1: MTTの場合
+        # ---------------------------------------------------------
         if is_mtt:
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
@@ -410,8 +413,8 @@ with col_graph:
                 else: plates_data.append((arr - blank_mean) / ctrl_mean * 100)
             
             num_p = len(plates_data)
-            
             indiv_figs = []
+            
             for i in range(num_p):
                 fig_i, ax_i = plt.subplots(figsize=(6, 4))
                 fig_i.patch.set_facecolor('white')
@@ -421,8 +424,8 @@ with col_graph:
                 errs_i = [calc_error(plates_data[i][valid_rows, c], error_bar_type) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
-                
                 ax_i.set_xscale('log')
+                
                 # 個別グラフの動的Y軸上限
                 mtt_max_y_i = 125.0
                 for m, e in zip(means_i, errs_i):
@@ -452,11 +455,9 @@ with col_graph:
                     ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                     
                 ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
-                
                 ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
-                
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, loc='right')
                 indiv_figs.append((plate_names[i], fig_i))
 
@@ -479,7 +480,6 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
-            # MTT多重比較補正
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -524,7 +524,6 @@ with col_graph:
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
-            # 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
@@ -549,7 +548,6 @@ with col_graph:
                 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
             ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
-            
             ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
             ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
             
@@ -611,10 +609,10 @@ with col_graph:
                     f.savefig(buf_i, format='svg', bbox_inches='tight')
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
-        # ==========================================
-        # 👑 ターゲット1つの場合
-        # ==========================================
-        elif num_targets == 1:
+        # ---------------------------------------------------------
+        # パターン2: MTT以外でターゲットが1つの場合
+        # ---------------------------------------------------------
+        if not is_mtt and num_targets == 1:
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -925,10 +923,10 @@ with col_graph:
         with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
         with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
-        # ==========================================
-        # 🚀 ターゲット複数（マルチターゲット）の場合
-        # ==========================================
-        else:
+        # ---------------------------------------------------------
+        # パターン3: MTT以外でターゲットが複数の場合
+        # ---------------------------------------------------------
+        if not is_mtt and num_targets > 1:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
@@ -968,17 +966,9 @@ with col_graph:
             p_pairs_multi = {j: [] for j in range(num_targets)}
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
-            is_grouped_test = 'グループ内' in test_target_mode
             
             for j in range(num_targets):
-                if num_targets > 1:
-                    groupings = [internal_ids] # マルチのときはターゲット内で全比較
-                elif is_grouped_test:
-                    unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
-                    groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ]
-                else:
-                    groupings = [internal_ids]
-
+                groupings = [internal_ids] # 複数ターゲット時は条件ラベルを無視して1つのグループとして扱う
                 for grp in groupings:
                     valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
                     
@@ -1019,7 +1009,7 @@ with col_graph:
                                             p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
                                     except Exception:
                                         pass
-
+                                        
                         if not is_standard_anova:
                             raw_p = []
                             pairs = list(combinations(valid_uids, 2))
