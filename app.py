@@ -215,7 +215,7 @@ with col_input:
             
             if num_targets == 1:
                 c_n, c_l, c_t = st.columns(3)
-                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiNC\nsiHSPA9")
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiHSPA9")
                 with c_l: bulk_l_single = st.text_area(f"2. 【{paste_l_label}】", height=150)
                 with c_t: bulk_t_single = st.text_area(f"3. 【{paste_t_label}】", height=150)
                 bulk_l_list = [bulk_l_single]
@@ -381,6 +381,9 @@ with col_graph:
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
+        # ---------------------------------------------------------
+        # パターン1: MTTの場合
+        # ---------------------------------------------------------
         if is_mtt:
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
@@ -410,8 +413,8 @@ with col_graph:
                 else: plates_data.append((arr - blank_mean) / ctrl_mean * 100)
             
             num_p = len(plates_data)
-            
             indiv_figs = []
+            
             for i in range(num_p):
                 fig_i, ax_i = plt.subplots(figsize=(6, 4))
                 fig_i.patch.set_facecolor('white')
@@ -421,9 +424,9 @@ with col_graph:
                 errs_i = [calc_error(plates_data[i][valid_rows, c], error_bar_type) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
-                
                 ax_i.set_xscale('log')
-                # ★ 個別グラフの動的Y軸上限
+                
+                # 個別グラフの動的Y軸上限
                 mtt_max_y_i = 125.0
                 for m, e in zip(means_i, errs_i):
                     if not np.isnan(m) and not np.isnan(e):
@@ -452,11 +455,9 @@ with col_graph:
                     ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                     
                 ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
-                
                 ax_i.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 ax_i.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
                 n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
-                
                 ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, loc='right')
                 indiv_figs.append((plate_names[i], fig_i))
 
@@ -480,7 +481,6 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
-            # MTT多重比較補正
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -526,7 +526,6 @@ with col_graph:
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
-            # ★ 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
@@ -551,7 +550,6 @@ with col_graph:
                 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
                 
             ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
-            
             ax.set_ylabel(ylabel_input, fontsize=14, fontweight='bold', labelpad=8)
             ax.set_xlabel(f"{l_name} [{mtt_unit}]", fontsize=14, fontweight='bold', labelpad=8)
             
@@ -652,6 +650,7 @@ with col_graph:
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
+            # 棒グラフ側の多重比較補正
             p_pairs = []
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
