@@ -215,7 +215,7 @@ with col_input:
             
             if num_targets == 1:
                 c_n, c_l, c_t = st.columns(3)
-                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiNC\nsiHSPA9")
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiHSPA9")
                 with c_l: bulk_l_single = st.text_area(f"2. 【{paste_l_label}】", height=150)
                 with c_t: bulk_t_single = st.text_area(f"3. 【{paste_t_label}】", height=150)
                 bulk_l_list = [bulk_l_single]
@@ -423,12 +423,11 @@ with col_graph:
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
                 
                 ax_i.set_xscale('log')
-                
-                # ★ 個別グラフの動的Y軸上限
+                # 個別グラフの動的Y軸上限
                 mtt_max_y_i = 125.0
                 for m, e in zip(means_i, errs_i):
                     if not np.isnan(m) and not np.isnan(e):
-                        mtt_max_y_i = max(mtt_max_y_i, (m + e) * 1.2)
+                        mtt_max_y_i = max(mtt_max_y_i, (m + e) * 1.15)
                 ax_i.set_ylim(bottom=0, top=mtt_max_y_i)
                 ax_i.yaxis.set_major_locator(ticker.MultipleLocator(20))
                 
@@ -473,10 +472,9 @@ with col_graph:
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
                 
-                # ★ 統合グラフのデータ長さをチェック
                 for m, e in zip(means, errs):
                     if not np.isnan(m) and not np.isnan(e):
-                        mtt_max_y_comb = max(mtt_max_y_comb, (m + e) * 1.2)
+                        mtt_max_y_comb = max(mtt_max_y_comb, (m + e) * 1.15)
             
             plotted_stars = set()
             mtt_test_name = ""
@@ -514,7 +512,6 @@ with col_graph:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
                     plotted_stars.add(stars)
                     
-                    # ★ 星の描画位置が天井を突き抜けないように動的確保
                     max_mean_err_c = 0
                     for d in col_data_valid:
                         m = np.nanmean(d)
@@ -527,7 +524,7 @@ with col_graph:
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
-            # ★ 最終的なY軸上限を適用
+            # 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
