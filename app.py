@@ -295,7 +295,7 @@ with col_input:
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                     with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                     with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
-                    input_data.append((n_up, n_down, [n_t], []))
+                    input_data.append((n_up, n_down, [n_t]))
                 elif num_targets == 1:
                     col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
@@ -422,7 +422,13 @@ with col_graph:
                 
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
                 
-                ax_i.set_xscale('log'); ax_i.set_ylim(bottom=0, top=125)
+                ax_i.set_xscale('log')
+                # ★ 個別グラフの動的Y軸上限
+                mtt_max_y_i = 125
+                for m, e in zip(means_i, errs_i):
+                    if not np.isnan(m) and not np.isnan(e):
+                        mtt_max_y_i = max(mtt_max_y_i, m + e + 15)
+                ax_i.set_ylim(bottom=0, top=mtt_max_y_i)
                 ax_i.yaxis.set_major_locator(ticker.MultipleLocator(20))
                 
                 for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
@@ -458,17 +464,21 @@ with col_graph:
             fig_comb.patch.set_facecolor('white')
             ax.set_facecolor('white')
             
+            mtt_max_y_comb = 125
             colors = sns.color_palette("Set1", max(num_p, 2)) if num_p > 1 else ['black']
             for i in range(num_p):
                 means = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 errs = [calc_error(plates_data[i][valid_rows, c], error_bar_type) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
+                # ★ 統合グラフのデータ長さをチェック
+                for m, e in zip(means, errs):
+                    if not np.isnan(m) and not np.isnan(e):
+                        mtt_max_y_comb = max(mtt_max_y_comb, m + e + 15)
             
             plotted_stars = set()
             mtt_test_name = ""
             
-            # MTT多重比較補正
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -500,10 +510,22 @@ with col_graph:
                 if not np.isnan(min_p) and min_p < 0.05:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
                     plotted_stars.add(stars)
-                    max_y_at_c = max([np.nanmean(d)+np.nanstd(d) for d in col_data_valid])
-                    ax.text(conc_vals_plot[idx_c], max_y_at_c + 6, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
+                    
+                    # ★ 星の描画位置が天井を突き抜けないように動的確保
+                    max_mean_err_c = 0
+                    for d in col_data_valid:
+                        m = np.nanmean(d)
+                        e = calc_error(d, error_bar_type)
+                        if not np.isnan(m) and not np.isnan(e):
+                            max_mean_err_c = max(max_mean_err_c, m + e)
+                            
+                    text_y = max_mean_err_c + 6
+                    mtt_max_y_comb = max(mtt_max_y_comb, text_y + 15)
+                    ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
-            ax.set_xscale('log'); ax.set_ylim(bottom=0, top=125)
+            ax.set_xscale('log')
+            # ★ 最終的なY軸上限を適用
+            ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
             for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
@@ -590,32 +612,336 @@ with col_graph:
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
         # ==========================================
-        # 🚀 ターゲットが1つ、または複数の場合（統合ロジック）
+        # 👑 ターゲット1つの場合
+        # ==========================================
+        elif num_targets == 1:
+            is_paired = '対応あり' in pairing_mode
+            is_non_param = 'ノンパラ' in pairing_mode
+            is_grouped_test = 'グループ内' in test_target_mode
+            
+            upper_labels, lower_labels, internal_ids, raw_processed = [], [], [], {}
+            
+            for idx, item in enumerate(input_data):
+                if is_microscope:
+                    u, d, val_t_list = item
+                    raw_processed[f"C_{idx}"] = parse_text(val_t_list[0])
+                else:
+                    u, d, val_t_list, val_l_list = item
+                    t_nums, l_nums = parse_text(val_t_list[0]), parse_text(val_l_list[0])
+                    length = max(len(t_nums), len(l_nums))
+                    t_nums.extend([np.nan] * (length - len(t_nums)))
+                    l_nums.extend([np.nan] * (length - len(l_nums)))
+                    if is_qpcr: raw_processed[f"C_{idx}"] = [t - l for t, l in zip(t_nums, l_nums)]
+                    else: raw_processed[f"C_{idx}"] = [t / l for t, l in zip(t_nums, l_nums)]
+                
+                upper_labels.append(u or f"U_{idx+1}"); lower_labels.append(d or "")
+                internal_ids.append(f"C_{idx}")
+            
+            has_data = any(len([v for v in raw_processed[uid] if not np.isnan(v)]) > 0 for uid in internal_ids)
+            if not has_data: st.stop()
+                
+            final_norm = {}
+            ctrl_id = internal_ids[0]
+            for i, uid in enumerate(internal_ids):
+                c_id = internal_ids[lower_labels.index(lower_labels[i])] if 'グループ' in norm_mode else ctrl_id
+                c_mean = np.nanmean(raw_processed[c_id])
+                if np.isnan(c_mean) or c_mean == 0: c_mean = 1.0 
+                
+                if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
+                else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
+            
+            # 棒グラフ側の多重比較補正 (ANOVAチェック + 本物のTukey)
+            p_pairs = []
+            if is_grouped_test:
+                unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
+                groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ]
+            else:
+                groupings = [internal_ids]
+
+            for grp in groupings:
+                valid_uids = [u for u in grp if len([v for v in raw_processed[u] if not np.isnan(v)]) >= 2]
+                
+                if len(valid_uids) == 2:
+                    u1, u2 = valid_uids[0], valid_uids[1]
+                    d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
+                    p = np.nan
+                    if is_non_param:
+                        _, p = stats.mannwhitneyu(d1, d2)
+                    elif is_paired:
+                        _, p = stats.ttest_rel(d1, d2)
+                    else:
+                        _, p = stats.ttest_ind(d1, d2, equal_var=False)
+                    p_pairs.append((u1, u2, p))
+                    
+                elif len(valid_uids) >= 3:
+                    is_standard_anova = (not is_non_param) and (not is_paired)
+                    
+                    if is_standard_anova:
+                        groups_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
+                        p_anova = 1.0
+                        try:
+                            _, p_anova = stats.f_oneway(*groups_data)
+                        except Exception:
+                            pass
+                            
+                        if p_anova < 0.05:
+                            all_v, all_g = [], []
+                            for u in valid_uids:
+                                d = [v for v in raw_processed[u] if not np.isnan(v)]
+                                all_v.extend(d)
+                                all_g.extend([u] * len(d))
+                            if len(all_v) > 0:
+                                try:
+                                    tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
+                                    tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
+                                    for _, row in tukey_df.iterrows():
+                                        p_pairs.append((row['group1'], row['group2'], row['p-adj']))
+                                except Exception:
+                                    pass
+                                    
+                    if not is_standard_anova:
+                        raw_p = []
+                        pairs = list(combinations(valid_uids, 2))
+                        for u1, u2 in pairs:
+                            d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
+                            p = np.nan
+                            if is_non_param:
+                                _, p = stats.mannwhitneyu(d1, d2)
+                            elif is_paired:
+                                _, p = stats.ttest_rel(d1, d2)
+                            raw_p.append(p)
+                        try:
+                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                            for pair, cp in zip(pairs, corrected_p):
+                                p_pairs.append((pair[0], pair[1], cp))
+                        except Exception:
+                            pass
+
+            unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
+            unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
+            gray_palette = ['black', 'darkgray', 'lightgray', 'dimgray', 'whitesmoke', '#E0E0E0']
+            palette = {u: gray_palette[i % len(gray_palette)] for i, u in enumerate(unique_up)} if "色分け" in color_mode else {u: "black" for u in unique_up}
+            
+            fig, ax = plt.subplots(figsize=(max(4.0, len(internal_ids)*1.5+1.5), 5.5))
+            fig.patch.set_facecolor('white')
+            ax.set_facecolor('white')
+            
+            x_coords = {}
+            bar_width = bar_width_input
+            
+            if layout_mode == "条件ごとにグループ化":
+                current_x = 0; group_centers = []
+                for low in unique_low:
+                    members = [i for i, l in enumerate(lower_labels) if l == low]
+                    g_start = current_x
+                    for i in members:
+                        x_coords[internal_ids[i]] = current_x
+                        current_x += bar_width + 0.02
+                    group_centers.append((g_start + current_x - bar_width - 0.02) / 2)
+                    current_x += 0.5
+            else:
+                for i, uid in enumerate(internal_ids):
+                    x_coords[uid] = float(i)
+
+            if is_microscope:
+                positions = [x_coords[uid] for uid in internal_ids]
+                box_data = [[v for v in final_norm[uid] if not np.isnan(v)] for uid in internal_ids]
+                ax.boxplot(box_data, positions=positions, widths=bar_width*1.5, patch_artist=True, 
+                           boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
+                           capprops=dict(color='black', linewidth=1.2),
+                           whiskerprops=dict(color='black', linewidth=1.2),
+                           medianprops=dict(color='black', linewidth=1.5), 
+                           flierprops=dict(marker='o', markerfacecolor='black', markeredgecolor='black', alpha=0.8, markersize=4))
+            else:
+                for i, uid in enumerate(internal_ids):
+                    mean_val = np.nanmean(final_norm[uid])
+                    err_val = calc_error(final_norm[uid], error_bar_type)
+                    ax.bar(x_coords[uid], mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
+                           width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), 
+                           label=upper_labels[i] if i == upper_labels.index(upper_labels[i]) else "")
+
+            for spine in ax.spines.values():
+                spine.set_visible(True); spine.set_color('black'); spine.set_linewidth(1.5)
+            ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=14)
+            ax.tick_params(axis='x', bottom=False, top=False)
+            
+            ax.set_xticklabels([]) 
+            trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
+            
+            if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
+                for low in unique_low:
+                    members = [i for i, l in enumerate(lower_labels) if l == low]
+                    xs = [x_coords[internal_ids[i]] for i in members]
+                    if xs: ax.text(sum(xs) / len(xs), -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+            else:
+                for i, uid in enumerate(internal_ids):
+                    ax.text(x_coords[uid], -0.05, upper_labels[i], ha='center', va='top', transform=trans, fontsize=16, color='black', fontweight='bold')
+                grouped_lower = [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]
+                for label, elements in grouped_lower:
+                    if not label: continue
+                    xs = [x_coords[internal_ids[x[0]]] for x in elements]
+                    x_start, x_end = min(xs), max(xs)
+                    if x_start != x_end:
+                        ax.plot([x_start - bar_width/2, x_end + bar_width/2], [-0.16, -0.16], color='black', lw=1.5, transform=trans, clip_on=False)
+                    ax.text((x_start + x_end) / 2, -0.21, label, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
+
+            # ★ 見切れないようにY軸の最大高さを完全にカバーする
+            all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
+            max_y = max(all_vals + [0]) if all_vals else 1.0
+            
+            max_mean_err = 0
+            for uid in internal_ids:
+                mean_val = np.nanmean(final_norm[uid])
+                err_val = calc_error(final_norm[uid], error_bar_type)
+                if not np.isnan(mean_val) and not np.isnan(err_val):
+                    max_mean_err = max(max_mean_err, mean_val + err_val)
+            max_y = max(max_y, max_mean_err)
+            if max_y == 0: max_y = 1.0
+            
+            y_shift, h, base_bracket_y = max_y * 0.15, max_y * 0.025, max_y * 1.15
+            levels, max_level, sig_pairs = [], 0, []
+            for u1, u2, p in p_pairs:
+                if p >= 0.05 or np.isnan(p): continue
+                stars = "***" if p < 0.001 else "**" if p < 0.01 else "*"
+                if u1 not in x_coords or u2 not in x_coords: continue
+                x1, x2 = x_coords[u1], x_coords[u2]
+                sig_pairs.append((min(x1, x2), max(x1, x2), stars))
+            
+            plotted_stars = set()
+            sig_pairs.sort(key=lambda x: x[1] - x[0])
+            for x_start, x_end, stars in sig_pairs:
+                plotted_stars.add(stars)
+                placed_level = -1
+                for l_idx, intervals in enumerate(levels):
+                    if not any(not (x_end < s or x_start > e) for s, e in intervals): placed_level = l_idx; break
+                if placed_level == -1: placed_level = len(levels); levels.append([])
+                levels[placed_level].append((x_start, x_end))
+                max_level = max(max_level, placed_level)
+                by = base_bracket_y + placed_level * y_shift
+                ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
+                ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
+
+            ax.set_ylim(0, base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3)
+            x_vals = list(x_coords.values())
+            if x_vals: ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
+            ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
+            
+            if "色分け" in color_mode:
+                handles, labels = ax.get_legend_handles_labels()
+                by_label = dict(zip(labels, handles))
+                if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
+
+            n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
+            expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
+            
+            max_g_len = max([len(grp) for grp in groupings]) if groupings else 0
+            if max_g_len == 2:
+                test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
+            elif max_g_len >= 3:
+                if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
+                elif is_paired: test_desc_flat = "Paired t-test (Holm)"
+                else: test_desc_flat = "One-way ANOVA followed by Tukey's test"
+            else:
+                test_desc_flat = ""
+                
+            star_str = ""
+            if plotted_stars:
+                star_texts = []
+                if "*" in plotted_stars: star_texts.append("* p < 0.05")
+                if "**" in plotted_stars: star_texts.append("** p < 0.01")
+                if "***" in plotted_stars: star_texts.append("*** p < 0.001")
+                star_str = ", " + ", ".join(star_texts)
+                
+            if is_microscope:
+                title_str = f"{test_desc_flat}{star_str}" if test_desc_flat else ""
+                if title_str: ax.set_title(title_str, fontsize=14, pad=15, loc='right')
+            else:
+                title_str = f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
+                ax.set_title(title_str, fontsize=14, pad=15, loc='right')
+
+            st.pyplot(fig)
+            
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                err_label = "SEM" if "SEM" in error_bar_type else "SD"
+                summary = pd.DataFrame({
+                    '上段ラベル': upper_labels, '下段ラベル': lower_labels,
+                    '平均': [np.nanmean(final_norm[u]) for u in internal_ids],
+                    err_label: [calc_error(final_norm[u], error_bar_type) for u in internal_ids]
+                })
+                summary.to_excel(writer, sheet_name='Summary', index=False)
+                
+                long_data = [{"条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for i, u in enumerate(internal_ids) for val in final_norm[u] if not np.isnan(val)]
+                pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
+                
+                stats_df = pd.DataFrame([{"比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs])
+                stats_df.to_excel(writer, sheet_name='Statistical_Details', index=False)
+                
+                try:
+                    if is_microscope:
+                        ws = writer.book['Normalized_Data']
+                        ws.cell(row=2, column=4, value="💡 【箱ひげ図の最短作成手順】")
+                        ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
+                        ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
+                    elif layout_mode == "条件ごとにグループ化":
+                        matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
+                        matrix_sd = pd.DataFrame(index=unique_up, columns=unique_low)
+                        for i, uid in enumerate(internal_ids):
+                            matrix_mean.at[upper_labels[i], lower_labels[i]] = np.nanmean(final_norm[uid])
+                            matrix_sd.at[upper_labels[i], lower_labels[i]] = calc_error(final_norm[uid], error_bar_type)
+                        
+                        matrix_mean.to_excel(writer, sheet_name='Summary_Matrix', startrow=1, startcol=0)
+                        matrix_sd.to_excel(writer, sheet_name='Summary_Matrix', startrow=len(unique_up)+4, startcol=0)
+                        
+                        ws = writer.book['Summary_Matrix']
+                        ws.cell(row=1, column=1, value="【平均値 (Mean)】")
+                        ws.cell(row=len(unique_up)+4, column=1, value=f"【{err_label}】")
+                        
+                        sc = len(unique_low) + 3
+                        ws.cell(row=2, column=sc, value="💡 【グループ化棒グラフの最短作成手順】")
+                        ws.cell(row=3, column=sc, value="1. 左上の【平均値】の表(A2から)を丸ごと選択し、[挿入] ＞ [2D 縦棒 (集合縦棒)] をクリック。")
+                        ws.cell(row=4, column=sc, value="2. 追加された棒をクリックし、[誤差範囲] ＞ [その他の誤差範囲オプション] ＞ [カスタム]")
+                        ws.cell(row=5, column=sc, value=f"3. 値の指定で、下の【{err_label}】の表の該当する行をドラッグして指定すれば完成です！")
+                    else:
+                        ws = writer.book['Summary']
+                        sc = len(summary.columns) + 2
+                        ws.cell(row=2, column=sc, value="💡 【エラーバー付き棒グラフの最短作成手順】")
+                        ws.cell(row=3, column=sc, value="1. 左の『上段ラベル』と『平均』の列を選択し、[挿入] ＞ [縦棒グラフ] を作成。")
+                        ws.cell(row=4, column=sc, value="2. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
+                        ws.cell(row=5, column=sc, value="3. 『カスタム』にチェックを入れ、『値の指定』。")
+                        ws.cell(row=6, column=sc, value=f"4. 正負両方に、左の『{err_label}』の数値をドラッグして指定すれば完成！")
+                except Exception:
+                    pass
+                
+        buf_svg = io.BytesIO()
+        fig.savefig(buf_svg, format='svg', bbox_inches='tight')
+        
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+        with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
+
+        # ==========================================
+        # 🚀 ターゲット複数（マルチターゲット）の場合
         # ==========================================
         else:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
             for idx, item in enumerate(input_data):
-                if is_microscope:
-                    u, d, val_t_list = item
-                    for j in range(num_targets):
-                        raw_processed_multi[j][f"C_{idx}"] = parse_text(val_t_list[j])
-                else:
-                    u, d, val_t_list, val_l_list = item
-                    for j in range(num_targets):
-                        t_nums = parse_text(val_t_list[j])
-                        l_nums = parse_text(val_l_list[j])
-                        length = max(len(t_nums), len(l_nums))
-                        t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
-                        l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
-                        if is_qpcr: 
-                            raw_processed_multi[j][f"C_{idx}"] = [t - l for t, l in zip(t_nums_ext, l_nums_ext)]
-                        else: 
-                            raw_processed_multi[j][f"C_{idx}"] = [t / l for t, l in zip(t_nums_ext, l_nums_ext)]
+                u, d, val_t_list, val_l_list = item
+                
+                for j in range(num_targets):
+                    t_nums = parse_text(val_t_list[j])
+                    l_nums = parse_text(val_l_list[j])
+                    length = max(len(t_nums), len(l_nums))
+                    t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
+                    l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
+                    if is_qpcr: 
+                        raw_processed_multi[j][f"C_{idx}"] = [t - l for t, l in zip(t_nums_ext, l_nums_ext)]
+                    else: 
+                        raw_processed_multi[j][f"C_{idx}"] = [t / l for t, l in zip(t_nums_ext, l_nums_ext)]
                         
-                upper_labels.append(u or f"U_{idx+1}")
-                lower_labels.append(d or "")
+                upper_labels.append(u or f"U_{idx+1}"); lower_labels.append(d or "")
                 internal_ids.append(f"C_{idx}")
                 
             has_data = any(len([v for v in raw_processed_multi[0][uid] if not np.isnan(v)]) > 0 for uid in internal_ids)
@@ -633,21 +959,12 @@ with col_graph:
                     if is_qpcr: final_norm_multi[j][uid] = [2 ** -(v - c_mean) for v in raw_processed_multi[j][uid]]
                     else: final_norm_multi[j][uid] = [v / c_mean for v in raw_processed_multi[j][uid]]
             
-            # 各ターゲットごとに統計計算
             p_pairs_multi = {j: [] for j in range(num_targets)}
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
-            is_grouped_test = 'グループ内' in test_target_mode
             
             for j in range(num_targets):
-                if num_targets > 1:
-                    groupings = [internal_ids] # マルチのときはターゲット内で全比較
-                elif is_grouped_test:
-                    unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
-                    groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ]
-                else:
-                    groupings = [internal_ids]
-
+                groupings = [internal_ids]
                 for grp in groupings:
                     valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
                     
@@ -688,7 +1005,7 @@ with col_graph:
                                             p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
                                     except Exception:
                                         pass
-
+                                        
                         if not is_standard_anova:
                             raw_p = []
                             pairs = list(combinations(valid_uids, 2))
@@ -707,7 +1024,6 @@ with col_graph:
                             except Exception:
                                 pass
 
-            unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
             
             gray_palette = ['black', 'darkgray', 'lightgray', 'dimgray', 'whitesmoke', '#E0E0E0']
@@ -722,103 +1038,52 @@ with col_graph:
             ax.set_facecolor('white')
             
             bar_width = bar_width_input
+            group_spacing = bar_width * len(unique_up) + 0.8
+            
             x_coords_multi = {j: {} for j in range(num_targets)}
             target_centers = []
             current_x = 0
             
-            if num_targets > 1:
-                # 複数ターゲットの配置 (ターゲットでグループ化)
-                for j in range(num_targets):
-                    g_start = current_x
-                    for i, uid in enumerate(internal_ids):
-                        x_coords_multi[j][uid] = current_x
-                        if is_microscope:
-                            d_list = [v for v in final_norm_multi[j][uid] if not np.isnan(v)]
-                            ax.boxplot([d_list] if d_list else [[]], positions=[current_x], widths=bar_width*1.5, patch_artist=True, 
-                                       boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
-                                       capprops=dict(color='black', linewidth=1.2),
-                                       whiskerprops=dict(color='black', linewidth=1.2),
-                                       medianprops=dict(color='black', linewidth=1.5), 
-                                       flierprops=dict(marker='o', markerfacecolor='black', markeredgecolor='black', alpha=0.8, markersize=4))
-                        else:
-                            mean_val = np.nanmean(final_norm_multi[j][uid])
-                            err_val = calc_error(final_norm_multi[j][uid], error_bar_type)
-                            label_str = upper_labels[i] if (j == 0 and i == upper_labels.index(upper_labels[i])) else ""
-                            ax.bar(current_x, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
-                                   width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_str)
-                        current_x += bar_width + 0.02
-                    target_centers.append((g_start + current_x - bar_width - 0.02) / 2)
-                    current_x += 0.8
-            else:
-                # 単一ターゲットの配置 (従来の配置)
-                if layout_mode == "条件ごとにグループ化":
-                    for low in unique_low:
-                        members = [i for i, l in enumerate(lower_labels) if l == low]
-                        g_start = current_x
-                        for i in members:
-                            x_coords_multi[0][internal_ids[i]] = current_x
-                            current_x += bar_width + 0.02
-                        target_centers.append((g_start + current_x - bar_width - 0.02) / 2)
-                        current_x += 0.5
-                else:
-                    for i, uid in enumerate(internal_ids):
-                        x_coords_multi[0][uid] = float(i)
-                        
+            for j in range(num_targets):
+                g_start = current_x
                 for i, uid in enumerate(internal_ids):
-                    cx = x_coords_multi[0][uid]
-                    if is_microscope:
-                        d_list = [v for v in final_norm_multi[0][uid] if not np.isnan(v)]
-                        ax.boxplot([d_list] if d_list else [[]], positions=[cx], widths=bar_width*1.5, patch_artist=True, 
-                                   boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
-                                   capprops=dict(color='black', linewidth=1.2),
-                                   whiskerprops=dict(color='black', linewidth=1.2),
-                                   medianprops=dict(color='black', linewidth=1.5), 
-                                   flierprops=dict(marker='o', markerfacecolor='black', markeredgecolor='black', alpha=0.8, markersize=4))
-                    else:
-                        mean_val = np.nanmean(final_norm_multi[0][uid])
-                        err_val = calc_error(final_norm_multi[0][uid], error_bar_type)
-                        label_str = upper_labels[i] if i == upper_labels.index(upper_labels[i]) else ""
-                        ax.bar(cx, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
-                               width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_str)
+                    x_coords_multi[j][uid] = current_x
+                    mean_val = np.nanmean(final_norm_multi[j][uid])
+                    err_val = calc_error(final_norm_multi[j][uid], error_bar_type)
+                    
+                    label_str = upper_labels[i] if (j == 0 and i == upper_labels.index(upper_labels[i])) else ""
+                    ax.bar(current_x, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
+                           width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_str)
+                    current_x += bar_width + 0.02
+                
+                target_centers.append((g_start + current_x - bar_width - 0.02) / 2)
+                current_x += 0.8
 
             for spine in ax.spines.values():
                 spine.set_visible(True); spine.set_color('black'); spine.set_linewidth(1.5)
             ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=14)
             ax.tick_params(axis='x', bottom=False, top=False)
             
-            ax.set_xticklabels([]) 
-            trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
+            ax.set_xticks(target_centers)
+            ax.set_xticklabels(target_names, fontsize=16, fontweight='bold', color='black')
             
-            # X軸のテキストラベル
-            if num_targets > 1:
-                ax.set_xticks(target_centers)
-                ax.set_xticklabels(target_names, fontsize=16, fontweight='bold', color='black')
-            else:
-                if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
-                    for low in unique_low:
-                        members = [i for i, l in enumerate(lower_labels) if l == low]
-                        xs = [x_coords_multi[0][internal_ids[i]] for i in members]
-                        if xs: ax.text(sum(xs) / len(xs), -0.05, low, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
-                else:
-                    for i, uid in enumerate(internal_ids):
-                        ax.text(x_coords_multi[0][uid], -0.05, upper_labels[i], ha='center', va='top', transform=trans, fontsize=16, color='black', fontweight='bold')
-                    grouped_lower = [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]
-                    for label, elements in grouped_lower:
-                        if not label: continue
-                        xs = [x_coords_multi[0][internal_ids[x[0]]] for x in elements]
-                        x_start, x_end = min(xs), max(xs)
-                        if x_start != x_end:
-                            ax.plot([x_start - bar_width/2, x_end + bar_width/2], [-0.16, -0.16], color='black', lw=1.5, transform=trans, clip_on=False)
-                        ax.text((x_start + x_end) / 2, -0.21, label, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
-
+            # ★ 見切れないようにY軸の最大高さを完全にカバーする
             all_vals = [v for j in range(num_targets) for vals in final_norm_multi[j].values() for v in vals if not np.isnan(v)]
             max_y = max(all_vals + [0]) if all_vals else 1.0
+            
+            max_mean_err = 0
+            for j in range(num_targets):
+                for uid in internal_ids:
+                    mean_val = np.nanmean(final_norm_multi[j][uid])
+                    err_val = calc_error(final_norm_multi[j][uid], error_bar_type)
+                    if not np.isnan(mean_val) and not np.isnan(err_val):
+                        max_mean_err = max(max_mean_err, mean_val + err_val)
+            max_y = max(max_y, max_mean_err)
             if max_y == 0: max_y = 1.0
             
             y_shift, h, base_bracket_y = max_y * 0.15, max_y * 0.025, max_y * 1.15
             plotted_stars = set()
             
-            # 星のプロット
             for j in range(num_targets):
                 levels, max_level, sig_pairs = [], 0, []
                 for u1, u2, p in p_pairs_multi[j]:
@@ -841,38 +1106,28 @@ with col_graph:
                     ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
                     ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
                 
-                if num_targets > 1:
-                    base_bracket_y += (max_level + 1) * y_shift if sig_pairs else 0
+                base_bracket_y += (max_level + 1) * y_shift if sig_pairs else 0
 
-            if num_targets == 1:
-                ax.set_ylim(0, base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3)
-                x_vals = list(x_coords_multi[0].values())
-                if x_vals: ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
-            else:
-                ax.set_ylim(0, base_bracket_y + y_shift if plotted_stars else max_y * 1.3)
-                ax.set_xlim(-0.6, current_x - 0.8 + 0.6)
-                
+            ax.set_ylim(0, base_bracket_y + y_shift if plotted_stars else max_y * 1.3)
+            ax.set_xlim(-0.6, current_x - 0.8 + 0.6)
             ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
             
-            if "色分け" in color_mode or num_targets > 1:
-                handles, labels = ax.get_legend_handles_labels()
-                by_label = dict(zip(labels, handles))
-                if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
+            handles, labels = ax.get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
 
             n_list = [len([v for v in raw_processed_multi[0][u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
-            test_desc_flat = ""
-            for j in range(num_targets):
-                if num_targets > 1: groupings = [internal_ids]
-                else: groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ] if is_grouped_test else [internal_ids]
-                max_g_len = max([len(grp) for grp in groupings]) if groupings else 0
-                if max_g_len == 2:
-                    test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
-                elif max_g_len >= 3:
-                    if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
-                    elif is_paired: test_desc_flat = "Paired t-test (Holm)"
-                    else: test_desc_flat = "One-way ANOVA followed by Tukey's test"
+            num_g = len(internal_ids)
+            if num_g == 2:
+                test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
+            elif num_g >= 3:
+                if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
+                elif is_paired: test_desc_flat = "Paired t-test (Holm)"
+                else: test_desc_flat = "One-way ANOVA followed by Tukey's test"
+            else:
+                test_desc_flat = ""
                 
             star_str = ""
             if plotted_stars:
@@ -883,7 +1138,6 @@ with col_graph:
                 star_str = ", " + ", ".join(star_texts)
                 
             title_str = f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
-            if is_microscope and not test_desc_flat: title_str = ""
             ax.set_title(title_str, fontsize=14, pad=15, loc='right')
 
             st.pyplot(fig)
@@ -892,34 +1146,22 @@ with col_graph:
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 err_label = "SEM" if "SEM" in error_bar_type else "SD"
                 
-                if num_targets == 1:
-                    summary = pd.DataFrame({
-                        '上段ラベル': upper_labels, '下段ラベル': lower_labels,
-                        '平均': [np.nanmean(final_norm_multi[0][u]) for u in internal_ids],
-                        err_label: [calc_error(final_norm_multi[0][u], error_bar_type) for u in internal_ids]
-                    })
-                    summary.to_excel(writer, sheet_name='Summary', index=False)
-                    long_data = [{"条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for i, u in enumerate(internal_ids) for val in final_norm_multi[0][u] if not np.isnan(val)]
-                    pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
-                    stats_df = pd.DataFrame([{"比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs_multi[0]])
-                    stats_df.to_excel(writer, sheet_name='Statistical_Details', index=False)
-                else:
-                    long_data = []
-                    for j in range(num_targets):
-                        for i, u in enumerate(internal_ids):
-                            for val in final_norm_multi[j][u]:
-                                if not np.isnan(val):
-                                    cond_name = f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i]
-                                    long_data.append({"ターゲット名": target_names[j], "条件名": cond_name, "正規化データ": float(val)})
-                    pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
-                    
-                    stat_data = []
-                    for j in range(num_targets):
-                        for u1, u2, p in p_pairs_multi[j]:
-                            signif = "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"
-                            stat_data.append({"ターゲット名": target_names[j], "比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": signif})
-                    if stat_data:
-                        pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
+                long_data = []
+                for j in range(num_targets):
+                    for i, u in enumerate(internal_ids):
+                        for val in final_norm_multi[j][u]:
+                            if not np.isnan(val):
+                                cond_name = f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i]
+                                long_data.append({"ターゲット名": target_names[j], "条件名": cond_name, "正規化データ": float(val)})
+                pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
+                
+                stat_data = []
+                for j in range(num_targets):
+                    for u1, u2, p in p_pairs_multi[j]:
+                        signif = "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"
+                        stat_data.append({"ターゲット名": target_names[j], "比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": signif})
+                if stat_data:
+                    pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
             st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             
