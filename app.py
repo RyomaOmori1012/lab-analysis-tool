@@ -650,7 +650,6 @@ with col_graph:
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
-            # 棒グラフ側の多重比較補正
             p_pairs = []
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
