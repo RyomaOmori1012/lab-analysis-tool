@@ -215,7 +215,7 @@ with col_input:
             
             if num_targets == 1:
                 c_n, c_l, c_t = st.columns(3)
-                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiHSPA9")
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiNC\nsiHSPA9")
                 with c_l: bulk_l_single = st.text_area(f"2. 【{paste_l_label}】", height=150)
                 with c_t: bulk_t_single = st.text_area(f"3. 【{paste_t_label}】", height=150)
                 bulk_l_list = [bulk_l_single]
@@ -295,7 +295,7 @@ with col_input:
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                     with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                     with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
-                    input_data.append((n_up, n_down, [n_t]))
+                    input_data.append((n_up, n_down, [n_t], []))
                 elif num_targets == 1:
                     col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
@@ -423,11 +423,12 @@ with col_graph:
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
                 
                 ax_i.set_xscale('log')
-                # Y軸の最大高さを完全にカバーする
-                mtt_max_y_i = 125
+                
+                # ★ 個別グラフの動的Y軸上限
+                mtt_max_y_i = 125.0
                 for m, e in zip(means_i, errs_i):
                     if not np.isnan(m) and not np.isnan(e):
-                        mtt_max_y_i = max(mtt_max_y_i, m + e + 15)
+                        mtt_max_y_i = max(mtt_max_y_i, (m + e) * 1.2)
                 ax_i.set_ylim(bottom=0, top=mtt_max_y_i)
                 ax_i.yaxis.set_major_locator(ticker.MultipleLocator(20))
                 
@@ -464,7 +465,7 @@ with col_graph:
             fig_comb.patch.set_facecolor('white')
             ax.set_facecolor('white')
             
-            mtt_max_y_comb = 125
+            mtt_max_y_comb = 125.0
             colors = sns.color_palette("Set1", max(num_p, 2)) if num_p > 1 else ['black']
             for i in range(num_p):
                 means = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
@@ -472,9 +473,10 @@ with col_graph:
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
                 
+                # ★ 統合グラフのデータ長さをチェック
                 for m, e in zip(means, errs):
                     if not np.isnan(m) and not np.isnan(e):
-                        mtt_max_y_comb = max(mtt_max_y_comb, m + e + 15)
+                        mtt_max_y_comb = max(mtt_max_y_comb, (m + e) * 1.2)
             
             plotted_stars = set()
             mtt_test_name = ""
@@ -512,6 +514,7 @@ with col_graph:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
                     plotted_stars.add(stars)
                     
+                    # ★ 星の描画位置が天井を突き抜けないように動的確保
                     max_mean_err_c = 0
                     for d in col_data_valid:
                         m = np.nanmean(d)
@@ -519,11 +522,12 @@ with col_graph:
                         if not np.isnan(m) and not np.isnan(e):
                             max_mean_err_c = max(max_mean_err_c, m + e)
                             
-                    text_y = max_mean_err_c + 6
-                    mtt_max_y_comb = max(mtt_max_y_comb, text_y + 15)
+                    text_y = max_mean_err_c + (mtt_max_y_comb * 0.05)
+                    mtt_max_y_comb = max(mtt_max_y_comb, text_y * 1.15)
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
+            # ★ 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
@@ -786,7 +790,7 @@ with col_graph:
 
             # ★ 見切れないようにY軸の最大高さを完全にカバーする
             all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
-            max_y = max(all_vals + [0]) if all_vals else 1.0
+            current_max_y = max(all_vals + [0]) if all_vals else 1.0
             
             max_mean_err = 0
             for uid in internal_ids:
@@ -794,10 +798,12 @@ with col_graph:
                 err_val = calc_error(final_norm[uid], error_bar_type)
                 if not np.isnan(mean_val) and not np.isnan(err_val):
                     max_mean_err = max(max_mean_err, mean_val + err_val)
-            max_y = max(max_y, max_mean_err)
-            if max_y == 0: max_y = 1.0
+            current_max_y = max(current_max_y, max_mean_err)
+            if current_max_y == 0: current_max_y = 1.0
             
-            y_shift, h, base_bracket_y = max_y * 0.15, max_y * 0.025, max_y * 1.15
+            y_shift, h, base_bracket_y = current_max_y * 0.15, current_max_y * 0.025, current_max_y * 1.10
+            max_element_y = current_max_y
+            
             levels, max_level, sig_pairs = [], 0, []
             for u1, u2, p in p_pairs:
                 if p >= 0.05 or np.isnan(p): continue
@@ -817,10 +823,14 @@ with col_graph:
                 levels[placed_level].append((x_start, x_end))
                 max_level = max(max_level, placed_level)
                 by = base_bracket_y + placed_level * y_shift
+                max_element_y = max(max_element_y, by + h)
+                
                 ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
                 ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
 
-            ax.set_ylim(0, base_bracket_y + (max_level + 1) * y_shift if sig_pairs else max_y * 1.3)
+            final_top = max(current_max_y * 1.2, max_element_y * 1.15)
+            ax.set_ylim(0, final_top)
+            
             x_vals = list(x_coords.values())
             if x_vals: ax.set_xlim(min(x_vals) - 0.6, max(x_vals) + 0.6)
             ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
@@ -940,7 +950,8 @@ with col_graph:
                     else: 
                         raw_processed_multi[j][f"C_{idx}"] = [t / l for t, l in zip(t_nums_ext, l_nums_ext)]
                         
-                upper_labels.append(u or f"U_{idx+1}"); lower_labels.append(d or "")
+                upper_labels.append(u or f"U_{idx+1}")
+                lower_labels.append(d or "")
                 internal_ids.append(f"C_{idx}")
                 
             has_data = any(len([v for v in raw_processed_multi[0][uid] if not np.isnan(v)]) > 0 for uid in internal_ids)
@@ -961,9 +972,17 @@ with col_graph:
             p_pairs_multi = {j: [] for j in range(num_targets)}
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
+            is_grouped_test = 'グループ内' in test_target_mode
             
             for j in range(num_targets):
-                groupings = [internal_ids]
+                if num_targets > 1:
+                    groupings = [internal_ids] # マルチのときはターゲット内で全比較
+                elif is_grouped_test:
+                    unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
+                    groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ]
+                else:
+                    groupings = [internal_ids]
+
                 for grp in groupings:
                     valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
                     
@@ -1004,7 +1023,7 @@ with col_graph:
                                             p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
                                     except Exception:
                                         pass
-                                        
+
                         if not is_standard_anova:
                             raw_p = []
                             pairs = list(combinations(valid_uids, 2))
@@ -1046,12 +1065,20 @@ with col_graph:
                 g_start = current_x
                 for i, uid in enumerate(internal_ids):
                     x_coords_multi[j][uid] = current_x
-                    mean_val = np.nanmean(final_norm_multi[j][uid])
-                    err_val = calc_error(final_norm_multi[j][uid], error_bar_type)
-                    
-                    label_str = upper_labels[i] if (j == 0 and i == upper_labels.index(upper_labels[i])) else ""
-                    ax.bar(current_x, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
-                           width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_str)
+                    if is_microscope:
+                        d_list = [v for v in final_norm_multi[j][uid] if not np.isnan(v)]
+                        ax.boxplot([d_list] if d_list else [[]], positions=[current_x], widths=bar_width*1.5, patch_artist=True, 
+                                   boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
+                                   capprops=dict(color='black', linewidth=1.2),
+                                   whiskerprops=dict(color='black', linewidth=1.2),
+                                   medianprops=dict(color='black', linewidth=1.5), 
+                                   flierprops=dict(marker='o', markerfacecolor='black', markeredgecolor='black', alpha=0.8, markersize=4))
+                    else:
+                        mean_val = np.nanmean(final_norm_multi[j][uid])
+                        err_val = calc_error(final_norm_multi[j][uid], error_bar_type)
+                        label_str = upper_labels[i] if (j == 0 and i == upper_labels.index(upper_labels[i])) else ""
+                        ax.bar(current_x, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
+                               width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_str)
                     current_x += bar_width + 0.02
                 
                 target_centers.append((g_start + current_x - bar_width - 0.02) / 2)
@@ -1067,7 +1094,7 @@ with col_graph:
             
             # ★ 見切れないようにY軸の最大高さを完全にカバーする
             all_vals = [v for j in range(num_targets) for vals in final_norm_multi[j].values() for v in vals if not np.isnan(v)]
-            max_y = max(all_vals + [0]) if all_vals else 1.0
+            current_max_y = max(all_vals + [0]) if all_vals else 1.0
             
             max_mean_err = 0
             for j in range(num_targets):
@@ -1076,12 +1103,13 @@ with col_graph:
                     err_val = calc_error(final_norm_multi[j][uid], error_bar_type)
                     if not np.isnan(mean_val) and not np.isnan(err_val):
                         max_mean_err = max(max_mean_err, mean_val + err_val)
-            max_y = max(max_y, max_mean_err)
-            if max_y == 0: max_y = 1.0
+            current_max_y = max(current_max_y, max_mean_err)
+            if current_max_y == 0: current_max_y = 1.0
             
-            y_shift, h, base_bracket_y = max_y * 0.15, max_y * 0.025, max_y * 1.15
+            y_shift, h, base_bracket_y = current_max_y * 0.15, current_max_y * 0.025, current_max_y * 1.10
+            max_element_y = current_max_y
+            
             plotted_stars = set()
-            
             for j in range(num_targets):
                 levels, max_level, sig_pairs = [], 0, []
                 for u1, u2, p in p_pairs_multi[j]:
@@ -1101,12 +1129,16 @@ with col_graph:
                     levels[placed_level].append((x_start, x_end))
                     max_level = max(max_level, placed_level)
                     by = base_bracket_y + placed_level * y_shift
+                    max_element_y = max(max_element_y, by + h)
+                    
                     ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
                     ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
                 
                 base_bracket_y += (max_level + 1) * y_shift if sig_pairs else 0
+                max_element_y = max(max_element_y, base_bracket_y)
 
-            ax.set_ylim(0, base_bracket_y + y_shift if plotted_stars else max_y * 1.3)
+            final_top = max(current_max_y * 1.2, max_element_y * 1.15)
+            ax.set_ylim(0, final_top)
             ax.set_xlim(-0.6, current_x - 0.8 + 0.6)
             ax.set_ylabel(ylabel_input, fontsize=16, fontweight="bold", color='black', labelpad=10)
             
