@@ -215,7 +215,7 @@ with col_input:
             
             if num_targets == 1:
                 c_n, c_l, c_t = st.columns(3)
-                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiNC\nsiHSPA9")
+                with c_n: bulk_n = st.text_area("1. 【名前】の列をペースト", height=150, placeholder="例:\nsiNC\nsiHSPA9")
                 with c_l: bulk_l_single = st.text_area(f"2. 【{paste_l_label}】", height=150)
                 with c_t: bulk_t_single = st.text_area(f"3. 【{paste_t_label}】", height=150)
                 bulk_l_list = [bulk_l_single]
@@ -423,7 +423,7 @@ with col_graph:
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
                 
                 ax_i.set_xscale('log')
-                # ★ 個別グラフの動的Y軸上限
+                # Y軸の最大高さを完全にカバーする
                 mtt_max_y_i = 125
                 for m, e in zip(means_i, errs_i):
                     if not np.isnan(m) and not np.isnan(e):
@@ -471,7 +471,7 @@ with col_graph:
                 errs = [calc_error(plates_data[i][valid_rows, c], error_bar_type) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
-                # ★ 統合グラフのデータ長さをチェック
+                
                 for m, e in zip(means, errs):
                     if not np.isnan(m) and not np.isnan(e):
                         mtt_max_y_comb = max(mtt_max_y_comb, m + e + 15)
@@ -479,6 +479,7 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
+            # MTT多重比較補正
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -511,7 +512,6 @@ with col_graph:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
                     plotted_stars.add(stars)
                     
-                    # ★ 星の描画位置が天井を突き抜けないように動的確保
                     max_mean_err_c = 0
                     for d in col_data_valid:
                         m = np.nanmean(d)
@@ -524,7 +524,6 @@ with col_graph:
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
-            # ★ 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
@@ -650,7 +649,7 @@ with col_graph:
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
-            # 棒グラフ側の多重比較補正 (ANOVAチェック + 本物のTukey)
+            # 棒グラフ側の多重比較補正
             p_pairs = []
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
@@ -1038,7 +1037,6 @@ with col_graph:
             ax.set_facecolor('white')
             
             bar_width = bar_width_input
-            group_spacing = bar_width * len(unique_up) + 0.8
             
             x_coords_multi = {j: {} for j in range(num_targets)}
             target_centers = []
@@ -1171,4 +1169,5 @@ with col_graph:
             with col_dl1: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
-        pass
+        st.error(f"グラフ描画中にエラーが発生しました: {e}")
+        st.code(traceback.format_exc())
