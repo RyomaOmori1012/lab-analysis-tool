@@ -291,11 +291,23 @@ with col_input:
         else:
             for i in range(num_cond):
                 if is_microscope:
-                    col_up, col_dn, col_t = st.columns([1, 1, 3.0])
-                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-                    with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                    with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
-                    input_data.append((n_up, n_down, [n_t], []))
+                    if num_targets == 1:
+                        col_up, col_dn, col_t = st.columns([1, 1, 3.0])
+                        with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                        with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                        with col_t: n_t = st.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")
+                        input_data.append((n_up, n_down, [n_t], []))
+                    else:
+                        st.markdown(f"**条件 {i+1}**")
+                        col_up, col_dn = st.columns(2)
+                        with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                        with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                        cols_manual = st.columns(num_targets)
+                        n_t_list = []
+                        for j in range(num_targets):
+                            with cols_manual[j]:
+                                n_t_list.append(st.text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}"))
+                        input_data.append((n_up, n_down, n_t_list, []))
                 elif num_targets == 1:
                     col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
                     with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
@@ -611,7 +623,7 @@ with col_graph:
         # =========================================================
         # ブロック2: MTT以外でターゲットが1つの場合
         # =========================================================
-        if not is_mtt and num_targets == 1:
+        elif num_targets == 1:
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -620,7 +632,7 @@ with col_graph:
             
             for idx, item in enumerate(input_data):
                 if is_microscope:
-                    u, d, val_t_list = item
+                    u, d, val_t_list, _ = item
                     raw_processed[f"C_{idx}"] = parse_text(val_t_list[0])
                 else:
                     u, d, val_t_list, val_l_list = item
@@ -631,7 +643,8 @@ with col_graph:
                     if is_qpcr: raw_processed[f"C_{idx}"] = [t - l for t, l in zip(t_nums, l_nums)]
                     else: raw_processed[f"C_{idx}"] = [t / l for t, l in zip(t_nums, l_nums)]
                 
-                upper_labels.append(u or f"U_{idx+1}"); lower_labels.append(d or "")
+                upper_labels.append(u or f"U_{idx+1}")
+                lower_labels.append(d or "")
                 internal_ids.append(f"C_{idx}")
             
             has_data = any(len([v for v in raw_processed[uid] if not np.isnan(v)]) > 0 for uid in internal_ids)
@@ -920,26 +933,30 @@ with col_graph:
             with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
-        # =========================================================
-        # ブロック3: MTT以外でターゲットが複数の場合
-        # =========================================================
-        if not is_mtt and num_targets > 1:
+        # ---------------------------------------------------------
+        # パターン3: MTT以外でターゲットが複数の場合
+        # ---------------------------------------------------------
+        elif not is_mtt and num_targets > 1:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
             for idx, item in enumerate(input_data):
-                u, d, val_t_list, val_l_list = item
-                
-                for j in range(num_targets):
-                    t_nums = parse_text(val_t_list[j])
-                    l_nums = parse_text(val_l_list[j])
-                    length = max(len(t_nums), len(l_nums))
-                    t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
-                    l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
-                    if is_qpcr: 
-                        raw_processed_multi[j][f"C_{idx}"] = [t - l for t, l in zip(t_nums_ext, l_nums_ext)]
-                    else: 
-                        raw_processed_multi[j][f"C_{idx}"] = [t / l for t, l in zip(t_nums_ext, l_nums_ext)]
+                if is_microscope:
+                    u, d, val_t_list, _ = item
+                    for j in range(num_targets):
+                        raw_processed_multi[j][f"C_{idx}"] = parse_text(val_t_list[j])
+                else:
+                    u, d, val_t_list, val_l_list = item
+                    for j in range(num_targets):
+                        t_nums = parse_text(val_t_list[j])
+                        l_nums = parse_text(val_l_list[j])
+                        length = max(len(t_nums), len(l_nums))
+                        t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
+                        l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
+                        if is_qpcr: 
+                            raw_processed_multi[j][f"C_{idx}"] = [t - l for t, l in zip(t_nums_ext, l_nums_ext)]
+                        else: 
+                            raw_processed_multi[j][f"C_{idx}"] = [t / l for t, l in zip(t_nums_ext, l_nums_ext)]
                         
                 upper_labels.append(u or f"U_{idx+1}")
                 lower_labels.append(d or "")
@@ -1047,7 +1064,6 @@ with col_graph:
             ax.set_facecolor('white')
             
             bar_width = bar_width_input
-            
             x_coords_multi = {j: {} for j in range(num_targets)}
             target_centers = []
             current_x = 0
