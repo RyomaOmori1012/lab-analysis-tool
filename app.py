@@ -381,10 +381,10 @@ with col_graph:
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
+        # =========================================================
+        # ブロック1: MTTの場合
+        # =========================================================
         if is_mtt:
-            # ---------------------------------------------------------
-            # パターン1: MTTの場合
-            # ---------------------------------------------------------
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
             s_cols.sort()
@@ -426,7 +426,6 @@ with col_graph:
                 ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
                 ax_i.set_xscale('log')
                 
-                # 個別グラフの動的Y軸上限
                 mtt_max_y_i = 125.0
                 for m, e in zip(means_i, errs_i):
                     if not np.isnan(m) and not np.isnan(e):
@@ -473,7 +472,6 @@ with col_graph:
                 ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
                 ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
                 
-                # ★ 統合グラフのデータ長さをチェック
                 for m, e in zip(means, errs):
                     if not np.isnan(m) and not np.isnan(e):
                         mtt_max_y_comb = max(mtt_max_y_comb, (m + e) * 1.15)
@@ -481,7 +479,6 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
-            # MTT多重比較補正
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -526,7 +523,6 @@ with col_graph:
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
-            # 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
@@ -612,11 +608,10 @@ with col_graph:
                     f.savefig(buf_i, format='svg', bbox_inches='tight')
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
-
-        # ---------------------------------------------------------
-        # パターン2: MTT以外でターゲットが1つの場合
-        # ---------------------------------------------------------
-        elif num_targets == 1:
+        # =========================================================
+        # ブロック2: MTT以外でターゲットが1つの場合
+        # =========================================================
+        if not is_mtt and num_targets == 1:
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -652,7 +647,6 @@ with col_graph:
                 if is_qpcr: final_norm[uid] = [2 ** -(v - c_mean) for v in raw_processed[uid]]
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
-            # 棒グラフ側の多重比較補正
             p_pairs = []
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
@@ -787,7 +781,6 @@ with col_graph:
                         ax.plot([x_start - bar_width/2, x_end + bar_width/2], [-0.16, -0.16], color='black', lw=1.5, transform=trans, clip_on=False)
                     ax.text((x_start + x_end) / 2, -0.21, label, ha='center', va='top', transform=trans, fontsize=16, fontweight='bold', color='black')
 
-            # ★ 見切れないようにY軸の最大高さを完全にカバーする
             all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
             current_max_y = max(all_vals + [0]) if all_vals else 1.0
             
@@ -921,17 +914,16 @@ with col_graph:
                 except Exception:
                     pass
                 
-        buf_svg = io.BytesIO()
-        fig.savefig(buf_svg, format='svg', bbox_inches='tight')
-        
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
-        with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
+            col_dl1, col_dl2 = st.columns(2)
+            buf_svg = io.BytesIO()
+            fig.savefig(buf_svg, format='svg', bbox_inches='tight')
+            with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+            with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
-        # ---------------------------------------------------------
-        # パターン3: MTT以外でターゲットが複数の場合
-        # ---------------------------------------------------------
-        elif not is_mtt and num_targets > 1:
+        # =========================================================
+        # ブロック3: MTT以外でターゲットが複数の場合
+        # =========================================================
+        if not is_mtt and num_targets > 1:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
@@ -1192,12 +1184,11 @@ with col_graph:
                 if stat_data:
                     pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
-            st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
-            
             col_dl1, col_dl2 = st.columns(2)
             buf_svg = io.BytesIO()
             fig.savefig(buf_svg, format='svg', bbox_inches='tight')
-            with col_dl1: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
+            with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+            with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
     except Exception as e:
         st.error(f"グラフ描画中にエラーが発生しました: {e}")
