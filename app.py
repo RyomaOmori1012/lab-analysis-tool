@@ -381,10 +381,10 @@ with col_graph:
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
-        # ---------------------------------------------------------
-        # パターン1: MTTの場合
-        # ---------------------------------------------------------
         if is_mtt:
+            # ---------------------------------------------------------
+            # パターン1: MTTの場合
+            # ---------------------------------------------------------
             i_rows, i_cols = parse_idx(mtt_ignore_row, True), parse_idx(mtt_ignore_col, False)
             b_cols, c_cols, s_cols = parse_idx(mtt_blank_col, False), parse_idx(mtt_control_col, False), parse_idx(mtt_sample_cols, False)
             s_cols.sort()
@@ -481,6 +481,7 @@ with col_graph:
             plotted_stars = set()
             mtt_test_name = ""
             
+            # MTT多重比較補正
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
@@ -513,7 +514,6 @@ with col_graph:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
                     plotted_stars.add(stars)
                     
-                    # ★ 星の描画位置が天井を突き抜けないように動的確保
                     max_mean_err_c = 0
                     for d in col_data_valid:
                         m = np.nanmean(d)
@@ -526,6 +526,7 @@ with col_graph:
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
 
             ax.set_xscale('log')
+            # 最終的なY軸上限を適用
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
             ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
             
@@ -611,10 +612,11 @@ with col_graph:
                     f.savefig(buf_i, format='svg', bbox_inches='tight')
                     st.download_button(f"📥 {p_name} のグラフ", buf_i.getvalue(), f"{p_name}_Graph.svg", "image/svg+xml")
 
+
         # ---------------------------------------------------------
         # パターン2: MTT以外でターゲットが1つの場合
         # ---------------------------------------------------------
-        if not is_mtt and num_targets == 1:
+        elif num_targets == 1:
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -929,7 +931,7 @@ with col_graph:
         # ---------------------------------------------------------
         # パターン3: MTT以外でターゲットが複数の場合
         # ---------------------------------------------------------
-        if not is_mtt and num_targets > 1:
+        elif not is_mtt and num_targets > 1:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
