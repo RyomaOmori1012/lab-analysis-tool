@@ -148,7 +148,7 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                 
         else: # パラメトリック検定
             if var_equal: # 分散が等しい (古典的ルート)
-                test_name = "One-way ANOVA followed by Dunnett's test" if is_vs_control else "One-way ANOVA followed by Tukey's test"
+                test_name = "One-way ANOVA followed by Student's t-test (Holm)" if is_vs_control else "One-way ANOVA followed by Tukey's test"
                 try: _, p_anova = stats.f_oneway(*valid_data)
                 except: p_anova = np.nan
                 
@@ -175,7 +175,7 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                                 pairs.append((int(row['group1']), int(row['group2']), row['p-adj']))
                         except: pass
             else: # 分散が異なる (Welchモダンルート)
-                test_name = "Welch's ANOVA followed by Dunnett's T3 test" if is_vs_control else "Welch's ANOVA followed by Games-Howell test"
+                test_name = "Welch's ANOVA followed by Welch's t-test (Holm)" if is_vs_control else "Welch's ANOVA followed by Games-Howell test"
                 try:
                     p_anova, gh_pairs = welch_anova_games_howell(valid_data)
                 except: p_anova = np.nan
@@ -399,7 +399,7 @@ with col_input:
                 else:
                     st.write("各ターゲットのデータと、対応するLoadingデータをペーストしてください。")
                     c_n, _ = st.columns([1, 3])
-                    with c_n: bulk_n = text_area("1. 【名前】列", height=150, placeholder="例:\nsiNC\nsiHSPA9")
+                    with c_n: bulk_n = st.text_area("1. 【名前】列", height=150, placeholder="例:\nsiNC\nsiHSPA9")
                     
                     bulk_t_list = []
                     bulk_l_list = []
@@ -774,7 +774,7 @@ with col_graph:
         # =========================================================
         # ブロック2: MTT以外でターゲットが1つの場合
         # =========================================================
-        if not is_mtt and num_targets == 1:
+        elif num_targets == 1:
             upper_labels, lower_labels, internal_ids, raw_processed = [], [], [], {}
             
             for idx, item in enumerate(input_data):
@@ -1028,7 +1028,7 @@ with col_graph:
         # =========================================================
         # ブロック3: MTT以外でターゲットが複数の場合
         # =========================================================
-        if not is_mtt and num_targets > 1:
+        elif not is_mtt and num_targets > 1:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
