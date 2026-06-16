@@ -132,19 +132,26 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                     pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
                     
         elif is_paired:
-            p_anova = 0.0 # RM ANOVAの近似として事後検定を許可
-            raw_p, comp_pairs = [], []
-            test_name = "Paired t-test (Holm vs Control)" if is_vs_control else "Paired t-test (Holm)"
-            iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
-            for idxs in iterator:
-                i, j = (0, idxs) if is_vs_control else idxs
-                try:
-                    _, p = stats.ttest_rel(valid_data[i], valid_data[j])
-                    raw_p.append(p); comp_pairs.append((i, j))
-                except: pass
-            if raw_p:
-                _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+            # ★ 修正: 3群以上のPairedはFriedman検定を通す
+            try:
+                _, p_anova = stats.friedmanchisquare(*valid_data)
+                test_name = "Friedman test followed by Wilcoxon signed-rank test (Holm)" if not is_vs_control else "Friedman test followed by Wilcoxon (Holm vs Control)"
+            except:
+                p_anova = np.nan
+                test_name = "Paired t-test (Holm) - Warning: Size mismatch for Friedman"
+                
+            if not np.isnan(p_anova) and p_anova < 0.05:
+                raw_p, comp_pairs = [], []
+                iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
+                for idxs in iterator:
+                    i, j = (0, idxs) if is_vs_control else idxs
+                    try:
+                        _, p = stats.wilcoxon(valid_data[i], valid_data[j])
+                        raw_p.append(p); comp_pairs.append((i, j))
+                    except: pass
+                if raw_p:
+                    _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                    pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
                 
         else: # パラメトリック検定
             if var_equal: # 分散が等しい (古典的ルート)
@@ -514,7 +521,7 @@ def parse_text(text):
     for line in text.replace(',', '\n').split('\n'):
         if line.strip():
             try: res.append(float(line.strip()))
-            except ValueError: res.append(np.nan)
+            except ValueError: res.append(np.nan) # ★ undetectなどの文字混入は自動的にNaNとして安全にスキップ
     return res if res else [np.nan]
 
 def parse_plate(text):
@@ -559,6 +566,8 @@ with col_graph:
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
+        dropped_warnings = set() # ★ n<2の除外警告用のリスト
+        
         # =========================================================
         # ブロック1: MTTの場合
         # =========================================================
@@ -661,7 +670,12 @@ with col_graph:
             
             for idx_c, c in enumerate(s_cols_plot):
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
-                col_data_valid = [d for d in col_data if len(d) > 0]
+                col_data_valid = []
+                for p_idx, d in enumerate(col_data):
+                    if len(d) >= 2:
+                        col_data_valid.append(d)
+                    else: # ★ MTTにおけるn<2除外の検知
+                        dropped_warnings.add(f"{plate_names[p_idx]} ({conc_vals_plot[idx_c]} {mtt_unit})")
                 
                 p_anova, pairs, t_name = run_statistical_test(col_data_valid, var_equal, is_vs_control, is_non_param, is_paired)
                 if t_name: mtt_test_name = t_name
@@ -684,6 +698,9 @@ with col_graph:
                     text_y = max_mean_err_c + (mtt_max_y_comb * 0.05)
                     mtt_max_y_comb = max(mtt_max_y_comb, text_y * 1.15)
                     ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
+
+            if dropped_warnings:
+                st.warning(f"⚠️ 以下の条件は有効なデータ数（n）が2未満のため、統計解析の対象から除外されました（グラフには表示されます）: {', '.join(dropped_warnings)}")
 
             ax.set_xscale('log')
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
@@ -790,8 +807,19 @@ with col_graph:
                     length = max(len(t_nums), len(l_nums))
                     t_nums.extend([np.nan] * (length - len(t_nums)))
                     l_nums.extend([np.nan] * (length - len(l_nums)))
-                    if is_qpcr: raw_processed[f"C_{idx}"] = [t - l for t, l in zip(t_nums, l_nums)]
-                    else: raw_processed[f"C_{idx}"] = [t / l for t, l in zip(t_nums, l_nums)]
+                    
+                    processed = []
+                    for t, l in zip(t_nums, l_nums):
+                        if np.isnan(t) or np.isnan(l):
+                            processed.append(np.nan)
+                        elif is_qpcr:
+                            processed.append(t - l)
+                        else:
+                            if l == 0: # ★ ゼロ割り防止（Inf回避）
+                                processed.append(np.nan)
+                            else:
+                                processed.append(t / l)
+                    raw_processed[f"C_{idx}"] = processed
                 
                 upper_labels.append(u or f"U_{idx+1}")
                 lower_labels.append(d or "")
@@ -819,14 +847,26 @@ with col_graph:
                 groupings = [internal_ids]
 
             for grp in groupings:
-                valid_uids = [u for u in grp if len([v for v in raw_processed[u] if not np.isnan(v)]) >= 2]
-                valid_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
+                valid_uids = []
+                valid_data = []
+                for u in grp:
+                    non_nan_data = [v for v in raw_processed[u] if not np.isnan(v)]
+                    if len(non_nan_data) >= 2:
+                        valid_uids.append(u)
+                        valid_data.append(non_nan_data)
+                    else: # ★ n<2の除外検知
+                        uid_idx = internal_ids.index(u)
+                        c_name = f"{upper_labels[uid_idx]} ({lower_labels[uid_idx]})" if lower_labels[uid_idx] else upper_labels[uid_idx]
+                        dropped_warnings.add(c_name)
                 
                 p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
                 if t_name: test_desc_flat = t_name
                 
                 for i_idx, j_idx, p_val in pairs:
                     p_pairs.append((valid_uids[i_idx], valid_uids[j_idx], p_val))
+
+            if dropped_warnings:
+                st.warning(f"⚠️ 以下の条件は有効なデータ数（n）が2未満のため、統計解析の対象から除外されました（グラフには表示されます）: {', '.join(dropped_warnings)}")
 
             unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
@@ -1048,10 +1088,19 @@ with col_graph:
                         length = max(len(t_nums), len(l_nums))
                         t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
                         l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
-                        if is_qpcr: 
-                            raw_processed_multi[j][f"C_{idx}"] = [t - l for t, l in zip(t_nums_ext, l_nums_ext)]
-                        else: 
-                            raw_processed_multi[j][f"C_{idx}"] = [t / l for t, l in zip(t_nums_ext, l_nums_ext)]
+                        
+                        processed = []
+                        for t, l in zip(t_nums_ext, l_nums_ext):
+                            if np.isnan(t) or np.isnan(l):
+                                processed.append(np.nan)
+                            elif is_qpcr:
+                                processed.append(t - l)
+                            else:
+                                if l == 0: # ★ ゼロ割り防止（Inf回避）
+                                    processed.append(np.nan)
+                                else:
+                                    processed.append(t / l)
+                        raw_processed_multi[j][f"C_{idx}"] = processed
                         
                 upper_labels.append(u or f"U_{idx+1}")
                 lower_labels.append(d or "")
@@ -1083,14 +1132,26 @@ with col_graph:
                     groupings = [internal_ids]
 
                 for grp in groupings:
-                    valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
-                    valid_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
+                    valid_uids = []
+                    valid_data = []
+                    for u in grp:
+                        non_nan_data = [v for v in raw_processed_multi[j][u] if not np.isnan(v)]
+                        if len(non_nan_data) >= 2:
+                            valid_uids.append(u)
+                            valid_data.append(non_nan_data)
+                        else: # ★ n<2の除外検知
+                            uid_idx = internal_ids.index(u)
+                            c_name = f"{target_names[j]}の{upper_labels[uid_idx]}"
+                            dropped_warnings.add(c_name)
                     
                     p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
                     if t_name: test_desc_flat = t_name
                     
                     for i_idx, j_idx, p_val in pairs:
                         p_pairs_multi[j].append((valid_uids[i_idx], valid_uids[j_idx], p_val))
+
+            if dropped_warnings:
+                st.warning(f"⚠️ 以下の条件は有効なデータ数（n）が2未満のため、統計解析の対象から除外されました（グラフには表示されます）: {', '.join(dropped_warnings)}")
 
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
             
