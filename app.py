@@ -101,9 +101,15 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
     if k == 2:
         d1, d2 = valid_data[0], valid_data[1]
         if is_non_param:
-            try: _, p_anova = stats.mannwhitneyu(d1, d2); test_name = "Mann-Whitney U test"
-            except: p_anova = np.nan
+            if is_paired:
+                if len(d1) != len(d2): return np.nan, [], "Wilcoxon failed (Size mismatch)"
+                try: _, p_anova = stats.wilcoxon(d1, d2); test_name = "Wilcoxon signed-rank test"
+                except: p_anova = np.nan
+            else:
+                try: _, p_anova = stats.mannwhitneyu(d1, d2, alternative='two-sided'); test_name = "Mann-Whitney U test"
+                except: p_anova = np.nan
         elif is_paired:
+            if len(d1) != len(d2): return np.nan, [], "Paired t-test failed (Size mismatch)"
             try: _, p_anova = stats.ttest_rel(d1, d2); test_name = "Paired t-test"
             except: p_anova = np.nan
         else:
@@ -124,7 +130,7 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                 for idxs in iterator:
                     i, j = (0, idxs) if is_vs_control else idxs
                     try:
-                        _, p = stats.mannwhitneyu(valid_data[i], valid_data[j])
+                        _, p = stats.mannwhitneyu(valid_data[i], valid_data[j], alternative='two-sided')
                         raw_p.append(p); comp_pairs.append((i, j))
                     except: pass
                 if raw_p:
@@ -132,13 +138,14 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                     pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
                     
         elif is_paired:
-            # ★ 修正: 3群以上のPairedはFriedman検定を通す
+            lens = [len(d) for d in valid_data]
+            if len(set(lens)) > 1:
+                return np.nan, [], "Friedman test failed (Size mismatch)"
             try:
                 _, p_anova = stats.friedmanchisquare(*valid_data)
                 test_name = "Friedman test followed by Wilcoxon signed-rank test (Holm)" if not is_vs_control else "Friedman test followed by Wilcoxon (Holm vs Control)"
             except:
-                p_anova = np.nan
-                test_name = "Paired t-test (Holm) - Warning: Size mismatch for Friedman"
+                return np.nan, [], "Friedman test failed"
                 
             if not np.isnan(p_anova) and p_anova < 0.05:
                 raw_p, comp_pairs = [], []
@@ -491,7 +498,7 @@ with col_input:
                 else:
                     st.markdown(f"**条件 {i+1}**")
                     col_up, col_dn = st.columns(2)
-                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                    with col_up: n_up = text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                     with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                     
                     if is_common_loading:
@@ -859,6 +866,9 @@ with col_graph:
                         c_name = f"{upper_labels[uid_idx]} ({lower_labels[uid_idx]})" if lower_labels[uid_idx] else upper_labels[uid_idx]
                         dropped_warnings.add(c_name)
                 
+                if len(valid_data) < 2:
+                    continue # ★ 1群しか残らなかった場合は検定をスキップ
+                
                 p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
                 if t_name: test_desc_flat = t_name
                 
@@ -897,7 +907,8 @@ with col_graph:
             if is_microscope:
                 positions = [x_coords[uid] for uid in internal_ids]
                 box_data = [[v for v in final_norm[uid] if not np.isnan(v)] for uid in internal_ids]
-                ax.boxplot(box_data, positions=positions, widths=bar_width*1.5, patch_artist=True, 
+                box_data_safe = [d if len(d) > 0 else [np.nan] for d in box_data] # ★ 完全空データ対策
+                ax.boxplot(box_data_safe, positions=positions, widths=bar_width*1.5, patch_artist=True, 
                            boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
                            capprops=dict(color='black', linewidth=1.2),
                            whiskerprops=dict(color='black', linewidth=1.2),
@@ -1020,8 +1031,16 @@ with col_graph:
                 long_data = [{"条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for i, u in enumerate(internal_ids) for val in final_norm[u] if not np.isnan(val)]
                 pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
                 
-                stats_df = pd.DataFrame([{"比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"} for u1, u2, p in p_pairs])
-                stats_df.to_excel(writer, sheet_name='Statistical_Details', index=False)
+                # ★ Excelの比較名改善（Ctrl vs Ctrl を回避）
+                stat_data = []
+                for u1, u2, p in p_pairs:
+                    idx1 = internal_ids.index(u1)
+                    idx2 = internal_ids.index(u2)
+                    comp_name1 = f"{upper_labels[idx1]} ({lower_labels[idx1]})" if lower_labels[idx1] else upper_labels[idx1]
+                    comp_name2 = f"{upper_labels[idx2]} ({lower_labels[idx2]})" if lower_labels[idx2] else upper_labels[idx2]
+                    signif = "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"
+                    stat_data.append({"比較": f"{comp_name1} vs {comp_name2}", "p値": p if not np.isnan(p) else "N/A", "判定": signif})
+                pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
                 try:
                     if is_microscope:
@@ -1144,6 +1163,9 @@ with col_graph:
                             c_name = f"{target_names[j]}の{upper_labels[uid_idx]}"
                             dropped_warnings.add(c_name)
                     
+                    if len(valid_data) < 2:
+                        continue # ★ 1群しか残らなかった場合は検定をスキップ
+                        
                     p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
                     if t_name: test_desc_flat = t_name
                     
@@ -1159,8 +1181,8 @@ with col_graph:
             if "色分け" in color_mode:
                 colors = sns.color_palette("Set1", max(len(unique_up), 2))
                 palette = {u: colors[i % len(colors)] for i, u in enumerate(unique_up)}
-            else:
-                palette = {u: "black" for u in unique_up}
+            else: # ★ モノクロ固定時はグレーパレットを使用
+                palette = {u: gray_palette[i % len(gray_palette)] for i, u in enumerate(unique_up)}
                 
             fig, ax = plt.subplots(figsize=(max(6.0, num_targets * len(unique_up) * 1.0), 5.5))
             fig.patch.set_facecolor('white')
@@ -1177,7 +1199,8 @@ with col_graph:
                     x_coords_multi[j][uid] = current_x
                     if is_microscope:
                         d_list = [v for v in final_norm_multi[j][uid] if not np.isnan(v)]
-                        ax.boxplot([d_list] if d_list else [[]], positions=[current_x], widths=bar_width*1.5, patch_artist=True, 
+                        d_list_safe = d_list if len(d_list) > 0 else [np.nan] # ★ 完全空データ対策
+                        ax.boxplot([d_list_safe], positions=[current_x], widths=bar_width*1.5, patch_artist=True, 
                                    boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
                                    capprops=dict(color='black', linewidth=1.2),
                                    whiskerprops=dict(color='black', linewidth=1.2),
@@ -1275,6 +1298,19 @@ with col_graph:
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 err_label = "SEM" if "SEM" in error_bar_type else "SD"
                 
+                # ★ 複数ターゲット版 Summaryシートの追加
+                summary_data = []
+                for j in range(num_targets):
+                    for i, u in enumerate(internal_ids):
+                        summary_data.append({
+                            'ターゲット名': target_names[j],
+                            '上段ラベル': upper_labels[i],
+                            '下段ラベル': lower_labels[i],
+                            '平均': np.nanmean(final_norm_multi[j][u]),
+                            err_label: calc_error(final_norm_multi[j][u], error_bar_type)
+                        })
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+                
                 long_data = []
                 for j in range(num_targets):
                     for i, u in enumerate(internal_ids):
@@ -1284,11 +1320,16 @@ with col_graph:
                                 long_data.append({"ターゲット名": target_names[j], "条件名": cond_name, "正規化データ": float(val)})
                 pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
                 
+                # ★ Excelの比較名改善
                 stat_data = []
                 for j in range(num_targets):
                     for u1, u2, p in p_pairs_multi[j]:
+                        idx1 = internal_ids.index(u1)
+                        idx2 = internal_ids.index(u2)
+                        comp_name1 = f"{upper_labels[idx1]} ({lower_labels[idx1]})" if lower_labels[idx1] else upper_labels[idx1]
+                        comp_name2 = f"{upper_labels[idx2]} ({lower_labels[idx2]})" if lower_labels[idx2] else upper_labels[idx2]
                         signif = "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"
-                        stat_data.append({"ターゲット名": target_names[j], "比較": f"{upper_labels[internal_ids.index(u1)]} vs {upper_labels[internal_ids.index(u2)]}", "p値": p if not np.isnan(p) else "N/A", "判定": signif})
+                        stat_data.append({"ターゲット名": target_names[j], "比較": f"{comp_name1} vs {comp_name2}", "p値": p if not np.isnan(p) else "N/A", "判定": signif})
                 if stat_data:
                     pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
