@@ -300,17 +300,29 @@ if not is_mtt:
     default_width = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
     bar_width_input = st.sidebar.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=default_width, step=0.01)
     
-    pairing_options = ['独立 (パラメトリック)', 'ノンパラメトリック'] if is_microscope else ['独立 (パラメトリック)', 'ノンパラメトリック', '対応あり (Paired)']
+    # ★ ここが修正の核心部分！4つの組み合わせを明示的に選択可能に変更
+    if is_microscope:
+        pairing_options = [
+            '独立 (パラメトリック)',
+            '独立 (ノンパラメトリック)'
+        ]
+    else:
+        pairing_options = [
+            '独立 (パラメトリック)',
+            '独立 (ノンパラメトリック)',
+            '対応あり (パラメトリック)',
+            '対応あり (ノンパラメトリック)'
+        ]
     pairing_mode = st.sidebar.radio('統計検定の前提:', pairing_options)
     
     var_equal = False
-    if 'パラメトリック' in pairing_mode:
+    if 'パラメトリック' in pairing_mode and '独立' in pairing_mode:
         variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が異なると仮定する (Welch等) [推奨]', '分散が等しいと仮定する (古典的)'])
         var_equal = '等しい' in variance_mode
         
     comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
     is_vs_control = 'Control' in comparison_mode
-    is_non_param = 'ノンパラ' in pairing_mode
+    is_non_param = 'ノンパラメトリック' in pairing_mode
     is_paired = '対応あり' in pairing_mode
     
     norm_mode = st.sidebar.radio('規格化:', ['全体基準 (一番上の条件で全て規格化)', 'グループ基準 (下段ラベル毎の先頭条件で規格化)'])
@@ -322,15 +334,20 @@ if not is_mtt:
 else:
     layout_mode, color_mode, norm_mode, test_target_mode = "", "", "", ""
     bar_width_input = 0.17
-    pairing_options = ['独立 (パラメトリック)', 'ノンパラメトリック', '対応あり (Paired)']
+    pairing_options = [
+        '独立 (パラメトリック)',
+        '独立 (ノンパラメトリック)',
+        '対応あり (パラメトリック)',
+        '対応あり (ノンパラメトリック)'
+    ]
     pairing_mode = st.sidebar.radio('統計検定の前提:', pairing_options)
     var_equal = False
-    if 'パラメトリック' in pairing_mode:
+    if 'パラメトリック' in pairing_mode and '独立' in pairing_mode:
         variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が異なると仮定する (Welch等) [推奨]', '分散が等しいと仮定する (古典的)'])
         var_equal = '等しい' in variance_mode
     comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
     is_vs_control = 'Control' in comparison_mode
-    is_non_param = 'ノンパラ' in pairing_mode
+    is_non_param = 'ノンパラメトリック' in pairing_mode
     is_paired = '対応あり' in pairing_mode
 
 if not is_mtt:
@@ -498,7 +515,7 @@ with col_input:
                 else:
                     st.markdown(f"**条件 {i+1}**")
                     col_up, col_dn = st.columns(2)
-                    with col_up: n_up = text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                    with col_up: n_up = st.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                     with col_dn: n_down = st.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                     
                     if is_common_loading:
