@@ -125,7 +125,8 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
             except: p_anova = np.nan
             if not np.isnan(p_anova) and p_anova < 0.05:
                 raw_p, comp_pairs = [], []
-                test_name = "Kruskal-Wallis test (Holm vs Control)" if is_vs_control else "Kruskal-Wallis test (Holm)"
+                # ★ 変更点: Kruskal-Wallisの表記をより厳密で丁寧なものに変更
+                test_name = "Kruskal-Wallis test followed by Mann-Whitney U test (Holm vs Control)" if is_vs_control else "Kruskal-Wallis test followed by Mann-Whitney U test (Holm)"
                 iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
                 for idxs in iterator:
                     i, j = (0, idxs) if is_vs_control else idxs
@@ -332,7 +333,6 @@ if not is_mtt:
     else:
         test_target_mode = 'グループ内でのみ検定'
         
-    # ★ バグ修正: is_grouped_test の定義を追加
     is_grouped_test = 'グループ内' in test_target_mode
 else:
     layout_mode, color_mode, norm_mode, test_target_mode = "", "", "", ""
@@ -352,7 +352,7 @@ else:
     is_vs_control = 'Control' in comparison_mode
     is_non_param = 'ノンパラメトリック' in pairing_mode
     is_paired = '対応あり' in pairing_mode
-    is_grouped_test = False # MTT用ダミー
+    is_grouped_test = False
 
 if not is_mtt:
     if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
@@ -595,7 +595,7 @@ with col_graph:
     
     try:
         dropped_warnings = set()
-        non_param_warnings = set() # ★ ノンパラ×少サンプルの警告用
+        non_param_warnings = set()
         
         # =========================================================
         # ブロック1: MTTの場合
@@ -706,7 +706,6 @@ with col_graph:
                     else:
                         dropped_warnings.add(f"{plate_names[p_idx]} ({conc_vals_plot[idx_c]} {mtt_unit})")
                 
-                # ★ ノンパラメトリックでn数が少ない場合の警告フラグ
                 if is_non_param and any(len(d) <= 3 for d in col_data_valid):
                     non_param_warnings.add("MTTデータ")
                 
@@ -897,7 +896,6 @@ with col_graph:
                 if len(valid_data) < 2:
                     continue
                 
-                # ★ ノンパラメトリックでn数が少ない場合の警告フラグ
                 if is_non_param and any(len(d) <= 3 for d in valid_data):
                     non_param_warnings.add("解析データ")
                 
@@ -1200,7 +1198,6 @@ with col_graph:
                     if len(valid_data) < 2:
                         continue
                     
-                    # ★ ノンパラメトリックでn数が少ない場合の警告フラグ
                     if is_non_param and any(len(d) <= 3 for d in valid_data):
                         non_param_warnings.add("解析データ")
                         
