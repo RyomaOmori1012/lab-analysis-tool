@@ -51,6 +51,48 @@ def calc_error(data, err_type):
         return sd / np.sqrt(len(arr))
     return sd
 
+# ★ Welch's ANOVA & Games-Howell 検定用のヘルパー関数
+def welch_anova_games_howell(data_list):
+    k = len(data_list)
+    ns = np.array([len(d) for d in data_list])
+    means = np.array([np.nanmean(d) for d in data_list])
+    
+    # 分散を計算 (n<2の時や分散0の時はゼロ割防止で1e-10にする)
+    vars = np.array([np.nanvar(d, ddof=1) if len(d) > 1 else 1e-10 for d in data_list])
+    vars = np.where(np.isnan(vars), 1e-10, vars)
+    vars = np.where(vars <= 0, 1e-10, vars)
+    
+    # Welch's ANOVA
+    w = ns / vars
+    sum_w = np.sum(w)
+    grand_mean = np.sum(w * means) / sum_w
+    num = np.sum(w * (means - grand_mean)**2) / (k - 1)
+    den_part = np.sum((1 - w / sum_w)**2 / (ns - 1))
+    den = 1 + (2 * (k - 2) / (k**2 - 1)) * den_part
+    f_val = num / den
+    df1 = k - 1
+    df2 = 1 / (3 / (k**2 - 1) * den_part)
+    p_anova = stats.f.sf(f_val, df1, df2)
+    
+    # Games-Howell test
+    pairs = []
+    for i in range(k):
+        for j in range(i + 1, k):
+            t_val = np.abs(means[i] - means[j]) / np.sqrt(vars[i]/ns[i] + vars[j]/ns[j])
+            df_num = (vars[i]/ns[i] + vars[j]/ns[j])**2
+            df_den = ((vars[i]/ns[i])**2) / (ns[i]-1) + ((vars[j]/ns[j])**2) / (ns[j]-1)
+            df_gh = df_num / df_den if df_den > 0 else 1e-10
+            q_val = t_val * np.sqrt(2)
+            try:
+                p_gh = stats.studentized_range.sf(q_val, k, df_gh)
+            except AttributeError:
+                # 古いバージョンのscipy用フォールバック (Bonferroni近似)
+                p_gh = stats.t.sf(t_val, df_gh) * 2 * (k * (k - 1) / 2)
+                p_gh = min(p_gh, 1.0)
+            pairs.append((i, j, p_gh))
+            
+    return p_anova, pairs
+
 # ==========================================
 # サイドバー設定
 # ==========================================
@@ -500,22 +542,16 @@ with col_graph:
                     _, min_p = stats.ttest_ind(col_data_valid[0], col_data_valid[1], equal_var=False)
                     mtt_test_name = "Welch's t-test"
                 elif len(col_data_valid) >= 3:
-                    mtt_test_name = "One-way ANOVA followed by Tukey's test"
+                    mtt_test_name = "Welch's ANOVA followed by Games-Howell test"
                     p_anova = 1.0
                     try:
-                        _, p_anova = stats.f_oneway(*col_data_valid)
+                        p_anova, gh_pairs = welch_anova_games_howell(col_data_valid)
                     except Exception:
                         pass
                         
                     if p_anova < 0.05:
-                        all_v, all_g = [], []
-                        for p_idx, d in enumerate(col_data_valid):
-                            all_v.extend(d)
-                            all_g.extend([p_idx] * len(d))
                         try:
-                            tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
-                            tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
-                            min_p = tukey_df['p-adj'].min()
+                            min_p = min([p for i_idx, j_idx, p in gh_pairs])
                         except Exception:
                             pass
 
@@ -623,7 +659,7 @@ with col_graph:
         # =========================================================
         # ブロック2: MTT以外でターゲットが1つの場合
         # =========================================================
-        elif num_targets == 1:
+        if not is_mtt and num_targets == 1:
             is_paired = '対応あり' in pairing_mode
             is_non_param = 'ノンパラ' in pairing_mode
             is_grouped_test = 'グループ内' in test_target_mode
@@ -689,24 +725,16 @@ with col_graph:
                         groups_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
                         p_anova = 1.0
                         try:
-                            _, p_anova = stats.f_oneway(*groups_data)
+                            p_anova, gh_pairs = welch_anova_games_howell(groups_data)
                         except Exception:
                             pass
                             
                         if p_anova < 0.05:
-                            all_v, all_g = [], []
-                            for u in valid_uids:
-                                d = [v for v in raw_processed[u] if not np.isnan(v)]
-                                all_v.extend(d)
-                                all_g.extend([u] * len(d))
-                            if len(all_v) > 0:
-                                try:
-                                    tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
-                                    tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
-                                    for _, row in tukey_df.iterrows():
-                                        p_pairs.append((row['group1'], row['group2'], row['p-adj']))
-                                except Exception:
-                                    pass
+                            try:
+                                for i_idx, j_idx, p_adj in gh_pairs:
+                                    p_pairs.append((valid_uids[i_idx], valid_uids[j_idx], p_adj))
+                            except Exception:
+                                pass
                                     
                     if not is_standard_anova:
                         raw_p = []
@@ -854,7 +882,7 @@ with col_graph:
             elif max_g_len >= 3:
                 if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
                 elif is_paired: test_desc_flat = "Paired t-test (Holm)"
-                else: test_desc_flat = "One-way ANOVA followed by Tukey's test"
+                else: test_desc_flat = "Welch's ANOVA followed by Games-Howell test"
             else:
                 test_desc_flat = ""
                 
@@ -933,10 +961,10 @@ with col_graph:
             with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
             with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", buf_svg.getvalue(), "Graph.svg", "image/svg+xml", use_container_width=True)
 
-        # ---------------------------------------------------------
-        # パターン3: MTT以外でターゲットが複数の場合
-        # ---------------------------------------------------------
-        elif not is_mtt and num_targets > 1:
+        # =========================================================
+        # ブロック3: MTT以外でターゲットが複数の場合
+        # =========================================================
+        if not is_mtt and num_targets > 1:
             upper_labels, lower_labels, internal_ids = [], [], []
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
@@ -1013,24 +1041,16 @@ with col_graph:
                             groups_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
                             p_anova = 1.0
                             try:
-                                _, p_anova = stats.f_oneway(*groups_data)
+                                p_anova, gh_pairs = welch_anova_games_howell(groups_data)
                             except Exception:
                                 pass
                                 
                             if p_anova < 0.05:
-                                all_v, all_g = [], []
-                                for u in valid_uids:
-                                    d = [v for v in raw_processed_multi[j][u] if not np.isnan(v)]
-                                    all_v.extend(d)
-                                    all_g.extend([u] * len(d))
-                                if len(all_v) > 0:
-                                    try:
-                                        tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
-                                        tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
-                                        for _, row in tukey_df.iterrows():
-                                            p_pairs_multi[j].append((row['group1'], row['group2'], row['p-adj']))
-                                    except Exception:
-                                        pass
+                                try:
+                                    for i_idx, j_idx, p_adj in gh_pairs:
+                                        p_pairs_multi[j].append((valid_uids[i_idx], valid_uids[j_idx], p_adj))
+                                except Exception:
+                                    pass
 
                         if not is_standard_anova:
                             raw_p = []
@@ -1064,6 +1084,7 @@ with col_graph:
             ax.set_facecolor('white')
             
             bar_width = bar_width_input
+            
             x_coords_multi = {j: {} for j in range(num_targets)}
             target_centers = []
             current_x = 0
@@ -1162,7 +1183,7 @@ with col_graph:
             elif num_g >= 3:
                 if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
                 elif is_paired: test_desc_flat = "Paired t-test (Holm)"
-                else: test_desc_flat = "One-way ANOVA followed by Tukey's test"
+                else: test_desc_flat = "Welch's ANOVA followed by Games-Howell test"
             else:
                 test_desc_flat = ""
                 
