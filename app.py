@@ -215,7 +215,9 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
 # ==========================================
 st.sidebar.header("⚙️ 全体設定")
 selected_exp = st.sidebar.selectbox('実験手法:', ['Western Blotting (WB)', 'HPLC', 'qPCR', 'MTT Assay (細胞生存率)', '蛍光顕微鏡 (Box Plot)'])
-num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=1, max_value=20, value=4, step=1)
+
+# ★ 変更点1: デフォルト値を 2 に変更
+num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=1, max_value=20, value=2, step=1)
 
 is_mtt = 'MTT' in selected_exp
 is_microscope = '顕微鏡' in selected_exp
@@ -300,7 +302,6 @@ if not is_mtt:
     default_width = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
     bar_width_input = st.sidebar.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=default_width, step=0.01)
     
-    # ★ ここが修正の核心部分！4つの組み合わせを明示的に選択可能に変更
     if is_microscope:
         pairing_options = [
             '独立 (パラメトリック)',
@@ -317,7 +318,8 @@ if not is_mtt:
     
     var_equal = False
     if 'パラメトリック' in pairing_mode and '独立' in pairing_mode:
-        variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が異なると仮定する (Welch等) [推奨]', '分散が等しいと仮定する (古典的)'])
+        # ★ 変更点2 & 3: [推奨]を削除し、等分散を上に（デフォルトに）
+        variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が等しいと仮定する (古典的)', '分散が異なると仮定する (Welch等)'])
         var_equal = '等しい' in variance_mode
         
     comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
@@ -343,7 +345,8 @@ else:
     pairing_mode = st.sidebar.radio('統計検定の前提:', pairing_options)
     var_equal = False
     if 'パラメトリック' in pairing_mode and '独立' in pairing_mode:
-        variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が異なると仮定する (Welch等) [推奨]', '分散が等しいと仮定する (古典的)'])
+        # ★ 変更点2 & 3: [推奨]を削除し、等分散を上に（デフォルトに）
+        variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が等しいと仮定する (古典的)', '分散が異なると仮定する (Welch等)'])
         var_equal = '等しい' in variance_mode
     comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
     is_vs_control = 'Control' in comparison_mode
@@ -1057,7 +1060,8 @@ with col_graph:
                     comp_name2 = f"{upper_labels[idx2]} ({lower_labels[idx2]})" if lower_labels[idx2] else upper_labels[idx2]
                     signif = "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"
                     stat_data.append({"比較": f"{comp_name1} vs {comp_name2}", "p値": p if not np.isnan(p) else "N/A", "判定": signif})
-                pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
+                if stat_data:
+                    pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
                 
                 try:
                     if is_microscope:
