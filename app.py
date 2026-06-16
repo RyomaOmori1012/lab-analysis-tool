@@ -51,18 +51,15 @@ def calc_error(data, err_type):
         return sd / np.sqrt(len(arr))
     return sd
 
-# ★ Welch's ANOVA & Games-Howell 検定用のヘルパー関数
+# ★ Welch's ANOVA & Games-Howell 検定計算エンジン
 def welch_anova_games_howell(data_list):
     k = len(data_list)
     ns = np.array([len(d) for d in data_list])
     means = np.array([np.nanmean(d) for d in data_list])
-    
-    # 分散を計算 (n<2の時や分散0の時はゼロ割防止で1e-10にする)
     vars = np.array([np.nanvar(d, ddof=1) if len(d) > 1 else 1e-10 for d in data_list])
     vars = np.where(np.isnan(vars), 1e-10, vars)
     vars = np.where(vars <= 0, 1e-10, vars)
     
-    # Welch's ANOVA
     w = ns / vars
     sum_w = np.sum(w)
     grand_mean = np.sum(w * means) / sum_w
@@ -74,7 +71,6 @@ def welch_anova_games_howell(data_list):
     df2 = 1 / (3 / (k**2 - 1) * den_part)
     p_anova = stats.f.sf(f_val, df1, df2)
     
-    # Games-Howell test
     pairs = []
     for i in range(k):
         for j in range(i + 1, k):
@@ -86,12 +82,119 @@ def welch_anova_games_howell(data_list):
             try:
                 p_gh = stats.studentized_range.sf(q_val, k, df_gh)
             except AttributeError:
-                # 古いバージョンのscipy用フォールバック (Bonferroni近似)
                 p_gh = stats.t.sf(t_val, df_gh) * 2 * (k * (k - 1) / 2)
                 p_gh = min(p_gh, 1.0)
             pairs.append((i, j, p_gh))
             
     return p_anova, pairs
+
+# ★ 統合された最強の統計エンジン
+def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired):
+    k = len(valid_data)
+    pairs = []
+    p_anova = np.nan
+    test_name = ""
+    
+    if k < 2:
+        return np.nan, [], ""
+        
+    if k == 2:
+        d1, d2 = valid_data[0], valid_data[1]
+        if is_non_param:
+            try: _, p_anova = stats.mannwhitneyu(d1, d2); test_name = "Mann-Whitney U test"
+            except: p_anova = np.nan
+        elif is_paired:
+            try: _, p_anova = stats.ttest_rel(d1, d2); test_name = "Paired t-test"
+            except: p_anova = np.nan
+        else:
+            try: _, p_anova = stats.ttest_ind(d1, d2, equal_var=var_equal)
+            except: p_anova = np.nan
+            test_name = "Student's t-test" if var_equal else "Welch's t-test"
+        if not np.isnan(p_anova):
+            pairs.append((0, 1, p_anova))
+            
+    else: # 3条件以上の比較
+        if is_non_param:
+            try: _, p_anova = stats.kruskal(*valid_data)
+            except: p_anova = np.nan
+            if not np.isnan(p_anova) and p_anova < 0.05:
+                raw_p, comp_pairs = [], []
+                test_name = "Kruskal-Wallis test (Holm vs Control)" if is_vs_control else "Kruskal-Wallis test (Holm)"
+                iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
+                for idxs in iterator:
+                    i, j = (0, idxs) if is_vs_control else idxs
+                    try:
+                        _, p = stats.mannwhitneyu(valid_data[i], valid_data[j])
+                        raw_p.append(p); comp_pairs.append((i, j))
+                    except: pass
+                if raw_p:
+                    _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                    pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                    
+        elif is_paired:
+            p_anova = 0.0 # RM ANOVAの近似として事後検定を許可
+            raw_p, comp_pairs = [], []
+            test_name = "Paired t-test (Holm vs Control)" if is_vs_control else "Paired t-test (Holm)"
+            iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
+            for idxs in iterator:
+                i, j = (0, idxs) if is_vs_control else idxs
+                try:
+                    _, p = stats.ttest_rel(valid_data[i], valid_data[j])
+                    raw_p.append(p); comp_pairs.append((i, j))
+                except: pass
+            if raw_p:
+                _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                
+        else: # パラメトリック検定
+            if var_equal: # 分散が等しい (古典的ルート)
+                test_name = "One-way ANOVA followed by Dunnett's test" if is_vs_control else "One-way ANOVA followed by Tukey's test"
+                try: _, p_anova = stats.f_oneway(*valid_data)
+                except: p_anova = np.nan
+                
+                if not np.isnan(p_anova) and p_anova < 0.05:
+                    if is_vs_control:
+                        raw_p, comp_pairs = [], []
+                        for j in range(1, k):
+                            try:
+                                _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=True)
+                                raw_p.append(p); comp_pairs.append((0, j))
+                            except: pass
+                        if raw_p:
+                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                            pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                    else:
+                        all_v, all_g = [], []
+                        for p_idx, d in enumerate(valid_data):
+                            all_v.extend(d)
+                            all_g.extend([p_idx] * len(d))
+                        try:
+                            tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
+                            df_t = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
+                            for _, row in df_t.iterrows():
+                                pairs.append((int(row['group1']), int(row['group2']), row['p-adj']))
+                        except: pass
+            else: # 分散が異なる (Welchモダンルート)
+                test_name = "Welch's ANOVA followed by Dunnett's T3 test" if is_vs_control else "Welch's ANOVA followed by Games-Howell test"
+                try:
+                    p_anova, gh_pairs = welch_anova_games_howell(valid_data)
+                except: p_anova = np.nan
+                
+                if not np.isnan(p_anova) and p_anova < 0.05:
+                    if is_vs_control:
+                        raw_p, comp_pairs = [], []
+                        for j in range(1, k):
+                            try:
+                                _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=False)
+                                raw_p.append(p); comp_pairs.append((0, j))
+                            except: pass
+                        if raw_p:
+                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                            pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                    else:
+                        pairs = gh_pairs
+                        
+    return p_anova, pairs, test_name
 
 # ==========================================
 # サイドバー設定
@@ -183,8 +286,19 @@ if not is_mtt:
     default_width = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
     bar_width_input = st.sidebar.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=default_width, step=0.01)
     
-    pairing_options = ['独立 (Welch等)', 'ノンパラ (Mann-Whitney等)'] if is_microscope else ['独立 (Welch等)', '対応あり (Paired等)']
-    pairing_mode = st.sidebar.radio('統計検定:', pairing_options)
+    pairing_options = ['独立 (パラメトリック)', 'ノンパラメトリック'] if is_microscope else ['独立 (パラメトリック)', 'ノンパラメトリック', '対応あり (Paired)']
+    pairing_mode = st.sidebar.radio('統計検定の前提:', pairing_options)
+    
+    var_equal = False
+    if 'パラメトリック' in pairing_mode:
+        variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が異なると仮定する (Welch等) [推奨]', '分散が等しいと仮定する (古典的)'])
+        var_equal = '等しい' in variance_mode
+        
+    comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
+    is_vs_control = 'Control' in comparison_mode
+    is_non_param = 'ノンパラ' in pairing_mode
+    is_paired = '対応あり' in pairing_mode
+    
     norm_mode = st.sidebar.radio('規格化:', ['全体基準 (一番上の条件で全て規格化)', 'グループ基準 (下段ラベル毎の先頭条件で規格化)'])
     
     if num_targets == 1:
@@ -192,8 +306,18 @@ if not is_mtt:
     else:
         test_target_mode = 'グループ内でのみ検定'
 else:
-    layout_mode, color_mode, pairing_mode, norm_mode, test_target_mode = "", "", "", "", ""
+    layout_mode, color_mode, norm_mode, test_target_mode = "", "", "", ""
     bar_width_input = 0.17
+    pairing_options = ['独立 (パラメトリック)', 'ノンパラメトリック', '対応あり (Paired)']
+    pairing_mode = st.sidebar.radio('統計検定の前提:', pairing_options)
+    var_equal = False
+    if 'パラメトリック' in pairing_mode:
+        variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が異なると仮定する (Welch等) [推奨]', '分散が等しいと仮定する (古典的)'])
+        var_equal = '等しい' in variance_mode
+    comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
+    is_vs_control = 'Control' in comparison_mode
+    is_non_param = 'ノンパラ' in pairing_mode
+    is_paired = '対応あり' in pairing_mode
 
 if not is_mtt:
     if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
@@ -275,7 +399,7 @@ with col_input:
                 else:
                     st.write("各ターゲットのデータと、対応するLoadingデータをペーストしてください。")
                     c_n, _ = st.columns([1, 3])
-                    with c_n: bulk_n = st.text_area("1. 【名前】列", height=150, placeholder="例:\nsiNC\nsiHSPA9")
+                    with c_n: bulk_n = text_area("1. 【名前】列", height=150, placeholder="例:\nsiNC\nsiHSPA9")
                     
                     bulk_t_list = []
                     bulk_l_list = []
@@ -453,7 +577,9 @@ with col_graph:
                 s_cols_plot = s_cols
             
             plates_data, plate_names, ctrl_err_pct_list = [], [], []
-            for idx, (pn, pd_text) in enumerate(input_data):
+            for idx, item in enumerate(input_data):
+                pn = item[0]
+                pd_text = item[1]
                 arr = parse_plate(pd_text); plate_names.append(pn or f"Plate {idx+1}")
                 blank_vals = [arr[r, c] for r in valid_rows for c in b_cols if c not in i_cols and not np.isnan(arr[r, c])]
                 blank_mean = np.nanmean(blank_vals) if blank_vals else 0.0
@@ -537,23 +663,12 @@ with col_graph:
                 col_data = [d[~np.isnan(d)] for d in [plates_data[p][valid_rows, c] for p in range(num_p)]]
                 col_data_valid = [d for d in col_data if len(d) > 0]
                 
+                p_anova, pairs, t_name = run_statistical_test(col_data_valid, var_equal, is_vs_control, is_non_param, is_paired)
+                if t_name: mtt_test_name = t_name
+                
                 min_p = np.nan
-                if len(col_data_valid) == 2:
-                    _, min_p = stats.ttest_ind(col_data_valid[0], col_data_valid[1], equal_var=False)
-                    mtt_test_name = "Welch's t-test"
-                elif len(col_data_valid) >= 3:
-                    mtt_test_name = "Welch's ANOVA followed by Games-Howell test"
-                    p_anova = 1.0
-                    try:
-                        p_anova, gh_pairs = welch_anova_games_howell(col_data_valid)
-                    except Exception:
-                        pass
-                        
-                    if p_anova < 0.05:
-                        try:
-                            min_p = min([p for i_idx, j_idx, p in gh_pairs])
-                        except Exception:
-                            pass
+                if pairs:
+                    min_p = min([p_val for _, _, p_val in pairs])
 
                 if not np.isnan(min_p) and min_p < 0.05:
                     stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
@@ -660,18 +775,17 @@ with col_graph:
         # ブロック2: MTT以外でターゲットが1つの場合
         # =========================================================
         if not is_mtt and num_targets == 1:
-            is_paired = '対応あり' in pairing_mode
-            is_non_param = 'ノンパラ' in pairing_mode
-            is_grouped_test = 'グループ内' in test_target_mode
-            
             upper_labels, lower_labels, internal_ids, raw_processed = [], [], [], {}
             
             for idx, item in enumerate(input_data):
+                u = item[0]
+                d = item[1]
+                val_t_list = item[2]
+                val_l_list = item[3] if len(item) > 3 else []
+                
                 if is_microscope:
-                    u, d, val_t_list, _ = item
                     raw_processed[f"C_{idx}"] = parse_text(val_t_list[0])
                 else:
-                    u, d, val_t_list, val_l_list = item
                     t_nums, l_nums = parse_text(val_t_list[0]), parse_text(val_l_list[0])
                     length = max(len(t_nums), len(l_nums))
                     t_nums.extend([np.nan] * (length - len(t_nums)))
@@ -697,6 +811,7 @@ with col_graph:
                 else: final_norm[uid] = [v / c_mean for v in raw_processed[uid]]
             
             p_pairs = []
+            test_desc_flat = ""
             if is_grouped_test:
                 unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
                 groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ]
@@ -705,54 +820,13 @@ with col_graph:
 
             for grp in groupings:
                 valid_uids = [u for u in grp if len([v for v in raw_processed[u] if not np.isnan(v)]) >= 2]
+                valid_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
                 
-                if len(valid_uids) == 2:
-                    u1, u2 = valid_uids[0], valid_uids[1]
-                    d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
-                    p = np.nan
-                    if is_non_param:
-                        _, p = stats.mannwhitneyu(d1, d2)
-                    elif is_paired:
-                        _, p = stats.ttest_rel(d1, d2)
-                    else:
-                        _, p = stats.ttest_ind(d1, d2, equal_var=False)
-                    p_pairs.append((u1, u2, p))
-                    
-                elif len(valid_uids) >= 3:
-                    is_standard_anova = (not is_non_param) and (not is_paired)
-                    
-                    if is_standard_anova:
-                        groups_data = [[v for v in raw_processed[u] if not np.isnan(v)] for u in valid_uids]
-                        p_anova = 1.0
-                        try:
-                            p_anova, gh_pairs = welch_anova_games_howell(groups_data)
-                        except Exception:
-                            pass
-                            
-                        if p_anova < 0.05:
-                            try:
-                                for i_idx, j_idx, p_adj in gh_pairs:
-                                    p_pairs.append((valid_uids[i_idx], valid_uids[j_idx], p_adj))
-                            except Exception:
-                                pass
-                                    
-                    if not is_standard_anova:
-                        raw_p = []
-                        pairs = list(combinations(valid_uids, 2))
-                        for u1, u2 in pairs:
-                            d1, d2 = [v for v in raw_processed[u1] if not np.isnan(v)], [v for v in raw_processed[u2] if not np.isnan(v)]
-                            p = np.nan
-                            if is_non_param:
-                                _, p = stats.mannwhitneyu(d1, d2)
-                            elif is_paired:
-                                _, p = stats.ttest_rel(d1, d2)
-                            raw_p.append(p)
-                        try:
-                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                            for pair, cp in zip(pairs, corrected_p):
-                                p_pairs.append((pair[0], pair[1], cp))
-                        except Exception:
-                            pass
+                p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
+                if t_name: test_desc_flat = t_name
+                
+                for i_idx, j_idx, p_val in pairs:
+                    p_pairs.append((valid_uids[i_idx], valid_uids[j_idx], p_val))
 
             unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
@@ -876,16 +950,6 @@ with col_graph:
             n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
-            max_g_len = max([len(grp) for grp in groupings]) if groupings else 0
-            if max_g_len == 2:
-                test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
-            elif max_g_len >= 3:
-                if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
-                elif is_paired: test_desc_flat = "Paired t-test (Holm)"
-                else: test_desc_flat = "Welch's ANOVA followed by Games-Howell test"
-            else:
-                test_desc_flat = ""
-                
             star_str = ""
             if plotted_stars:
                 star_texts = []
@@ -969,12 +1033,15 @@ with col_graph:
             raw_processed_multi = {j: {} for j in range(num_targets)}
             
             for idx, item in enumerate(input_data):
+                u = item[0]
+                d = item[1]
+                val_t_list = item[2]
+                val_l_list = item[3] if len(item) > 3 else []
+                
                 if is_microscope:
-                    u, d, val_t_list, _ = item
                     for j in range(num_targets):
                         raw_processed_multi[j][f"C_{idx}"] = parse_text(val_t_list[j])
                 else:
-                    u, d, val_t_list, val_l_list = item
                     for j in range(num_targets):
                         t_nums = parse_text(val_t_list[j])
                         l_nums = parse_text(val_l_list[j])
@@ -1006,14 +1073,10 @@ with col_graph:
                     else: final_norm_multi[j][uid] = [v / c_mean for v in raw_processed_multi[j][uid]]
             
             p_pairs_multi = {j: [] for j in range(num_targets)}
-            is_paired = '対応あり' in pairing_mode
-            is_non_param = 'ノンパラ' in pairing_mode
-            is_grouped_test = 'グループ内' in test_target_mode
+            test_desc_flat = ""
             
             for j in range(num_targets):
-                if num_targets > 1:
-                    groupings = [internal_ids] # マルチのときはターゲット内で全比較
-                elif is_grouped_test:
+                if is_grouped_test:
                     unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
                     groupings = [ [u for u in internal_ids if lower_labels[internal_ids.index(u)] == low] for low in unique_low ]
                 else:
@@ -1021,54 +1084,13 @@ with col_graph:
 
                 for grp in groupings:
                     valid_uids = [u for u in grp if len([v for v in raw_processed_multi[j][u] if not np.isnan(v)]) >= 2]
+                    valid_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
                     
-                    if len(valid_uids) == 2:
-                        u1, u2 = valid_uids[0], valid_uids[1]
-                        d1, d2 = [v for v in raw_processed_multi[j][u1] if not np.isnan(v)], [v for v in raw_processed_multi[j][u2] if not np.isnan(v)]
-                        p = np.nan
-                        if is_non_param:
-                            _, p = stats.mannwhitneyu(d1, d2)
-                        elif is_paired:
-                            _, p = stats.ttest_rel(d1, d2)
-                        else:
-                            _, p = stats.ttest_ind(d1, d2, equal_var=False)
-                        p_pairs_multi[j].append((u1, u2, p))
-                        
-                    elif len(valid_uids) >= 3:
-                        is_standard_anova = (not is_non_param) and (not is_paired)
-                        
-                        if is_standard_anova:
-                            groups_data = [[v for v in raw_processed_multi[j][u] if not np.isnan(v)] for u in valid_uids]
-                            p_anova = 1.0
-                            try:
-                                p_anova, gh_pairs = welch_anova_games_howell(groups_data)
-                            except Exception:
-                                pass
-                                
-                            if p_anova < 0.05:
-                                try:
-                                    for i_idx, j_idx, p_adj in gh_pairs:
-                                        p_pairs_multi[j].append((valid_uids[i_idx], valid_uids[j_idx], p_adj))
-                                except Exception:
-                                    pass
-
-                        if not is_standard_anova:
-                            raw_p = []
-                            pairs = list(combinations(valid_uids, 2))
-                            for u1, u2 in pairs:
-                                d1, d2 = [v for v in raw_processed_multi[j][u1] if not np.isnan(v)], [v for v in raw_processed_multi[j][u2] if not np.isnan(v)]
-                                p = np.nan
-                                if is_non_param:
-                                    _, p = stats.mannwhitneyu(d1, d2)
-                                elif is_paired:
-                                    _, p = stats.ttest_rel(d1, d2)
-                                raw_p.append(p)
-                            try:
-                                _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                                for pair, cp in zip(pairs, corrected_p):
-                                    p_pairs_multi[j].append((pair[0], pair[1], cp))
-                            except Exception:
-                                pass
+                    p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
+                    if t_name: test_desc_flat = t_name
+                    
+                    for i_idx, j_idx, p_val in pairs:
+                        p_pairs_multi[j].append((valid_uids[i_idx], valid_uids[j_idx], p_val))
 
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
             
@@ -1084,7 +1106,6 @@ with col_graph:
             ax.set_facecolor('white')
             
             bar_width = bar_width_input
-            
             x_coords_multi = {j: {} for j in range(num_targets)}
             target_centers = []
             current_x = 0
@@ -1120,7 +1141,6 @@ with col_graph:
             ax.set_xticks(target_centers)
             ax.set_xticklabels(target_names, fontsize=16, fontweight='bold', color='black')
             
-            # ★ 見切れないようにY軸の最大高さを完全にカバーする
             all_vals = [v for j in range(num_targets) for vals in final_norm_multi[j].values() for v in vals if not np.isnan(v)]
             current_max_y = max(all_vals + [0]) if all_vals else 1.0
             
@@ -1177,16 +1197,6 @@ with col_graph:
             n_list = [len([v for v in raw_processed_multi[0][u] if not np.isnan(v)]) for u in internal_ids]
             expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
             
-            num_g = len(internal_ids)
-            if num_g == 2:
-                test_desc_flat = "Mann-Whitney U" if is_non_param else "Paired t-test" if is_paired else "Welch's t-test"
-            elif num_g >= 3:
-                if is_non_param: test_desc_flat = "Kruskal-Wallis (Holm)"
-                elif is_paired: test_desc_flat = "Paired t-test (Holm)"
-                else: test_desc_flat = "Welch's ANOVA followed by Games-Howell test"
-            else:
-                test_desc_flat = ""
-                
             star_str = ""
             if plotted_stars:
                 star_texts = []
