@@ -216,7 +216,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
 st.sidebar.header("⚙️ 全体設定")
 selected_exp = st.sidebar.selectbox('実験手法:', ['Western Blotting (WB)', 'HPLC', 'qPCR', 'MTT Assay (細胞生存率)', '蛍光顕微鏡 (Box Plot)'])
 
-# ★ 変更点1: デフォルト値を 2 に変更
 num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=1, max_value=20, value=2, step=1)
 
 is_mtt = 'MTT' in selected_exp
@@ -318,7 +317,6 @@ if not is_mtt:
     
     var_equal = False
     if 'パラメトリック' in pairing_mode and '独立' in pairing_mode:
-        # ★ 変更点2 & 3: [推奨]を削除し、等分散を上に（デフォルトに）
         variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が等しいと仮定する (古典的)', '分散が異なると仮定する (Welch等)'])
         var_equal = '等しい' in variance_mode
         
@@ -333,6 +331,9 @@ if not is_mtt:
         test_target_mode = st.sidebar.radio('検定範囲:', ['すべての条件間で検定', 'グループ内でのみ検定 (下段ラベルが同じ条件間)'])
     else:
         test_target_mode = 'グループ内でのみ検定'
+        
+    # ★ バグ修正: is_grouped_test の定義を追加
+    is_grouped_test = 'グループ内' in test_target_mode
 else:
     layout_mode, color_mode, norm_mode, test_target_mode = "", "", "", ""
     bar_width_input = 0.17
@@ -345,13 +346,13 @@ else:
     pairing_mode = st.sidebar.radio('統計検定の前提:', pairing_options)
     var_equal = False
     if 'パラメトリック' in pairing_mode and '独立' in pairing_mode:
-        # ★ 変更点2 & 3: [推奨]を削除し、等分散を上に（デフォルトに）
         variance_mode = st.sidebar.radio('ばらつき(分散)の仮定:', ['分散が等しいと仮定する (古典的)', '分散が異なると仮定する (Welch等)'])
         var_equal = '等しい' in variance_mode
     comparison_mode = st.sidebar.radio('比較方式 (3条件以上の場合):', ['すべての組み合わせを総当たりで比較', '一番左の群(Control)とだけ比較'])
     is_vs_control = 'Control' in comparison_mode
     is_non_param = 'ノンパラメトリック' in pairing_mode
     is_paired = '対応あり' in pairing_mode
+    is_grouped_test = False # MTT用ダミー
 
 if not is_mtt:
     if layout_mode == "条件ごとにグループ化" and "色分け" in color_mode:
@@ -548,7 +549,7 @@ def parse_text(text):
     for line in text.replace(',', '\n').split('\n'):
         if line.strip():
             try: res.append(float(line.strip()))
-            except ValueError: res.append(np.nan) # ★ undetectなどの文字混入は自動的にNaNとして安全にスキップ
+            except ValueError: res.append(np.nan)
     return res if res else [np.nan]
 
 def parse_plate(text):
@@ -593,7 +594,8 @@ with col_graph:
     st.info("💡 左の枠に文字を打つとグラフの枠が連動し、数値をペーストすると棒が出現します。")
     
     try:
-        dropped_warnings = set() # ★ n<2の除外警告用のリスト
+        dropped_warnings = set()
+        non_param_warnings = set() # ★ ノンパラ×少サンプルの警告用
         
         # =========================================================
         # ブロック1: MTTの場合
@@ -701,8 +703,12 @@ with col_graph:
                 for p_idx, d in enumerate(col_data):
                     if len(d) >= 2:
                         col_data_valid.append(d)
-                    else: # ★ MTTにおけるn<2除外の検知
+                    else:
                         dropped_warnings.add(f"{plate_names[p_idx]} ({conc_vals_plot[idx_c]} {mtt_unit})")
+                
+                # ★ ノンパラメトリックでn数が少ない場合の警告フラグ
+                if is_non_param and any(len(d) <= 3 for d in col_data_valid):
+                    non_param_warnings.add("MTTデータ")
                 
                 p_anova, pairs, t_name = run_statistical_test(col_data_valid, var_equal, is_vs_control, is_non_param, is_paired)
                 if t_name: mtt_test_name = t_name
@@ -728,6 +734,8 @@ with col_graph:
 
             if dropped_warnings:
                 st.warning(f"⚠️ 以下の条件は有効なデータ数（n）が2未満のため、統計解析の対象から除外されました（グラフには表示されます）: {', '.join(dropped_warnings)}")
+            if non_param_warnings:
+                st.info("💡 データ数(n)が3以下のグループが含まれる場合、ノンパラメトリック検定では数理的にp < 0.05に到達しない（有意差が出ない）可能性があります。")
 
             ax.set_xscale('log')
             ax.set_ylim(bottom=0, top=mtt_max_y_comb)
@@ -842,7 +850,7 @@ with col_graph:
                         elif is_qpcr:
                             processed.append(t - l)
                         else:
-                            if l == 0: # ★ ゼロ割り防止（Inf回避）
+                            if l == 0:
                                 processed.append(np.nan)
                             else:
                                 processed.append(t / l)
@@ -881,13 +889,17 @@ with col_graph:
                     if len(non_nan_data) >= 2:
                         valid_uids.append(u)
                         valid_data.append(non_nan_data)
-                    else: # ★ n<2の除外検知
+                    else:
                         uid_idx = internal_ids.index(u)
                         c_name = f"{upper_labels[uid_idx]} ({lower_labels[uid_idx]})" if lower_labels[uid_idx] else upper_labels[uid_idx]
                         dropped_warnings.add(c_name)
                 
                 if len(valid_data) < 2:
-                    continue # ★ 1群しか残らなかった場合は検定をスキップ
+                    continue
+                
+                # ★ ノンパラメトリックでn数が少ない場合の警告フラグ
+                if is_non_param and any(len(d) <= 3 for d in valid_data):
+                    non_param_warnings.add("解析データ")
                 
                 p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
                 if t_name: test_desc_flat = t_name
@@ -897,6 +909,8 @@ with col_graph:
 
             if dropped_warnings:
                 st.warning(f"⚠️ 以下の条件は有効なデータ数（n）が2未満のため、統計解析の対象から除外されました（グラフには表示されます）: {', '.join(dropped_warnings)}")
+            if non_param_warnings:
+                st.info("💡 データ数(n)が3以下のグループが含まれる場合、ノンパラメトリック検定では数理的にp < 0.05に到達しない（有意差が出ない）可能性があります。")
 
             unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
@@ -927,7 +941,7 @@ with col_graph:
             if is_microscope:
                 positions = [x_coords[uid] for uid in internal_ids]
                 box_data = [[v for v in final_norm[uid] if not np.isnan(v)] for uid in internal_ids]
-                box_data_safe = [d if len(d) > 0 else [np.nan] for d in box_data] # ★ 完全空データ対策
+                box_data_safe = [d if len(d) > 0 else [np.nan] for d in box_data]
                 ax.boxplot(box_data_safe, positions=positions, widths=bar_width*1.5, patch_artist=True, 
                            boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
                            capprops=dict(color='black', linewidth=1.2),
@@ -1051,7 +1065,6 @@ with col_graph:
                 long_data = [{"条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for i, u in enumerate(internal_ids) for val in final_norm[u] if not np.isnan(val)]
                 pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
                 
-                # ★ Excelの比較名改善（Ctrl vs Ctrl を回避）
                 stat_data = []
                 for u1, u2, p in p_pairs:
                     idx1 = internal_ids.index(u1)
@@ -1136,7 +1149,7 @@ with col_graph:
                             elif is_qpcr:
                                 processed.append(t - l)
                             else:
-                                if l == 0: # ★ ゼロ割り防止（Inf回避）
+                                if l == 0:
                                     processed.append(np.nan)
                                 else:
                                     processed.append(t / l)
@@ -1179,13 +1192,17 @@ with col_graph:
                         if len(non_nan_data) >= 2:
                             valid_uids.append(u)
                             valid_data.append(non_nan_data)
-                        else: # ★ n<2の除外検知
+                        else:
                             uid_idx = internal_ids.index(u)
                             c_name = f"{target_names[j]}の{upper_labels[uid_idx]}"
                             dropped_warnings.add(c_name)
                     
                     if len(valid_data) < 2:
-                        continue # ★ 1群しか残らなかった場合は検定をスキップ
+                        continue
+                    
+                    # ★ ノンパラメトリックでn数が少ない場合の警告フラグ
+                    if is_non_param and any(len(d) <= 3 for d in valid_data):
+                        non_param_warnings.add("解析データ")
                         
                     p_anova, pairs, t_name = run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired)
                     if t_name: test_desc_flat = t_name
@@ -1195,6 +1212,8 @@ with col_graph:
 
             if dropped_warnings:
                 st.warning(f"⚠️ 以下の条件は有効なデータ数（n）が2未満のため、統計解析の対象から除外されました（グラフには表示されます）: {', '.join(dropped_warnings)}")
+            if non_param_warnings:
+                st.info("💡 データ数(n)が3以下のグループが含まれる場合、ノンパラメトリック検定では数理的にp < 0.05に到達しない（有意差が出ない）可能性があります。")
 
             unique_up = sorted(list(set(upper_labels)), key=lambda x: upper_labels.index(x))
             
@@ -1202,7 +1221,7 @@ with col_graph:
             if "色分け" in color_mode:
                 colors = sns.color_palette("Set1", max(len(unique_up), 2))
                 palette = {u: colors[i % len(colors)] for i, u in enumerate(unique_up)}
-            else: # ★ モノクロ固定時はグレーパレットを使用
+            else:
                 palette = {u: gray_palette[i % len(gray_palette)] for i, u in enumerate(unique_up)}
                 
             fig, ax = plt.subplots(figsize=(max(6.0, num_targets * len(unique_up) * 1.0), 5.5))
@@ -1220,7 +1239,7 @@ with col_graph:
                     x_coords_multi[j][uid] = current_x
                     if is_microscope:
                         d_list = [v for v in final_norm_multi[j][uid] if not np.isnan(v)]
-                        d_list_safe = d_list if len(d_list) > 0 else [np.nan] # ★ 完全空データ対策
+                        d_list_safe = d_list if len(d_list) > 0 else [np.nan]
                         ax.boxplot([d_list_safe], positions=[current_x], widths=bar_width*1.5, patch_artist=True, 
                                    boxprops=dict(facecolor='white', color='black', linewidth=1.2), 
                                    capprops=dict(color='black', linewidth=1.2),
@@ -1319,7 +1338,6 @@ with col_graph:
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 err_label = "SEM" if "SEM" in error_bar_type else "SD"
                 
-                # ★ 複数ターゲット版 Summaryシートの追加
                 summary_data = []
                 for j in range(num_targets):
                     for i, u in enumerate(internal_ids):
@@ -1341,7 +1359,6 @@ with col_graph:
                                 long_data.append({"ターゲット名": target_names[j], "条件名": cond_name, "正規化データ": float(val)})
                 pd.DataFrame(long_data).to_excel(writer, sheet_name='Normalized_Data', index=False)
                 
-                # ★ Excelの比較名改善
                 stat_data = []
                 for j in range(num_targets):
                     for u1, u2, p in p_pairs_multi[j]:
