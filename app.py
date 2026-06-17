@@ -125,7 +125,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
             except: p_anova = np.nan
             if not np.isnan(p_anova) and p_anova < 0.05:
                 raw_p, comp_pairs = [], []
-                # ★ 変更点: Kruskal-Wallisの表記をより厳密で丁寧なものに変更
                 test_name = "Kruskal-Wallis test followed by Mann-Whitney U test (Holm vs Control)" if is_vs_control else "Kruskal-Wallis test followed by Mann-Whitney U test (Holm)"
                 iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
                 for idxs in iterator:
@@ -793,6 +792,15 @@ with col_graph:
                     mtt_summary_dict[f"{p_name}_{err_label}"] = [float(ctrl_err_pct_list[i])] + [float(calc_error(plates_data[i][valid_rows, c], error_bar_type)) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
                 pd.DataFrame(mtt_summary_dict).to_excel(writer, sheet_name='Summary', index=False)
                 
+                # ★ MTT Assay用の説明書きをSummaryシートに追加
+                ws = writer.book['Summary']
+                ws.cell(row=2, column=len(mtt_summary_dict) + 2, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
+                ws.cell(row=3, column=len(mtt_summary_dict) + 2, value="1. 『濃度』の列と、グラフにしたい『〇〇_Mean(%)』の列を同時選択し、[挿入] ＞ [散布図 (直線とマーカー)] を作成。")
+                ws.cell(row=4, column=len(mtt_summary_dict) + 2, value="2. 作成されたグラフの横軸をクリックして[軸の書式設定]を開き、『対数目盛を表示する』にチェック。")
+                ws.cell(row=5, column=len(mtt_summary_dict) + 2, value="3. グラフのプロット線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
+                ws.cell(row=6, column=len(mtt_summary_dict) + 2, value="4. 『カスタム』にチェックを入れ、『値の指定』をクリック。")
+                ws.cell(row=7, column=len(mtt_summary_dict) + 2, value=f"5. 正負両方の選択ボックスに、対応する『〇〇_{err_label}』の数値をドラッグして指定すれば完成！")
+
                 long_mtt_list = []
                 for i, p_name in enumerate(plate_names):
                     ctrl_vals = [plates_data[i][r, c] for r in valid_rows for c in c_cols if c not in i_cols]
@@ -1347,6 +1355,15 @@ with col_graph:
                         })
                 pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
                 
+                # ★ 複数ターゲット用の説明書きをSummaryシートに追加
+                ws = writer.book['Summary']
+                ws.cell(row=2, column=7, value="💡 【複数ターゲットの棒グラフ最短作成手順】")
+                ws.cell(row=3, column=7, value="1. 1行目（見出し）を選択し、[データ]タブ ＞ [フィルター] をクリック。")
+                ws.cell(row=4, column=7, value="2. 『ターゲット名』の▼をクリックし、グラフにしたいターゲットを1つだけ選んで絞り込む。")
+                ws.cell(row=5, column=7, value="3. 表示された『上段ラベル』と『平均』の列を同時選択し、[挿入] ＞ [縦棒グラフ] を作成。")
+                ws.cell(row=6, column=7, value="4. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
+                ws.cell(row=7, column=7, value=f"5. 『カスタム』を選び、『値の指定』で正負両方に、フィルター後の表示されている『{err_label}』の列をドラッグして指定すれば完成！")
+
                 long_data = []
                 for j in range(num_targets):
                     for i, u in enumerate(internal_ids):
