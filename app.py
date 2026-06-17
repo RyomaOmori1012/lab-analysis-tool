@@ -412,7 +412,6 @@ def render_mtt_analysis(input_data, config):
             mtt_summary_dict[f"{p_name}_{err_label}"] = [float(ctrl_err_pct_list[i])] + [float(calc_error(plates_data[i][valid_rows, c], config['error_bar_type'])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
         pd.DataFrame(mtt_summary_dict).to_excel(writer, sheet_name='Summary', index=False)
         
-        # 削ってしまっていたMTTグラフ作成手順を復旧
         ws = writer.book['Summary']
         ws.cell(row=2, column=len(mtt_summary_dict) + 2, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
         ws.cell(row=3, column=len(mtt_summary_dict) + 2, value="1. 『濃度』の列と、グラフにしたい『〇〇_Mean(%)』の列を同時選択し、[挿入] ＞ [散布図 (直線とマーカー)] を作成。")
@@ -588,7 +587,9 @@ def render_single_target(input_data, config):
     ax.set_ylabel(config['ylabel_input'], fontsize=16, fontweight="bold", color='black', labelpad=10)
     
     if "色分け" in config['color_mode']:
-        by_label = dict(zip(*[reversed(i) for i in ax.get_legend_handles_labels()]))
+        # ★ バグ修正箇所: 凡例の重複排除を安全な方法に変更
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
         if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
 
     n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
@@ -616,7 +617,6 @@ def render_single_target(input_data, config):
             stat_data.append({"比較": f"{c1} vs {c2}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"})
         if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
 
-        # 削ってしまっていたマトリックス表と解説の書き出しを復旧
         try:
             if config['is_microscope']:
                 ws = writer.book['Normalized_Data']
@@ -792,8 +792,11 @@ def render_multi_target(input_data, config):
     ax.set_xlim(-0.6, current_x - 0.8 + 0.6)
     ax.set_ylabel(config['ylabel_input'], fontsize=16, fontweight="bold", color='black', labelpad=10)
     
-    by_label = dict(zip(*[reversed(i) for i in ax.get_legend_handles_labels()]))
-    if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
+    if "色分け" in config['color_mode']:
+        # ★ バグ修正箇所: 凡例の重複排除を安全な方法に変更
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper right', frameon=False, prop={'size': 12, 'weight': 'bold'})
 
     expected_n = n_list[0] if (n_list := [len([v for v in raw_processed_multi[0][u] if not np.isnan(v)]) for u in internal_ids]) and len(set(n_list)) == 1 else "varies"
     star_str = ", " + ", ".join([f"{s} p < {0.05 if s=='*' else 0.01 if s=='**' else 0.001}" for s in ["*", "**", "***"] if s in plotted_stars]) if plotted_stars else ""
@@ -808,7 +811,6 @@ def render_multi_target(input_data, config):
         err_label = "SEM" if "SEM" in config['error_bar_type'] else "SD"
         pd.DataFrame([{'ターゲット名': config['target_names'][j], '上段ラベル': upper_labels[i], '下段ラベル': lower_labels[i], '平均': np.nanmean(final_norm_multi[j][u]), err_label: calc_error(final_norm_multi[j][u], config['error_bar_type'])} for j in range(config['num_targets']) for i, u in enumerate(internal_ids)]).to_excel(writer, sheet_name='Summary', index=False)
         
-        # 削ってしまっていた複数ターゲット用の解説書き出しを復旧
         ws = writer.book['Summary']
         ws.cell(row=2, column=7, value="💡 【複数ターゲットの棒グラフ最短作成手順】")
         ws.cell(row=3, column=7, value="1. 1行目（見出し）を選択し、[データ]タブ ＞ [フィルター] をクリック。")
