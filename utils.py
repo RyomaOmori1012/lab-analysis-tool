@@ -217,7 +217,7 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (エラー探知機強化版)
+# ★ 画像解析エンジン (過剰分割防止チューニング版)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
@@ -258,19 +258,23 @@ def analyze_images(uploaded_files, mode="standard"):
             from skimage import filters, measure, segmentation, feature
             from scipy import ndimage
             
-            blurred = filters.gaussian(img_array, sigma=3)
+            # 【変更点1】少し強めにぼかして、細胞内の細かい明るさのムラを消す
+            blurred = filters.gaussian(img_array, sigma=5)
             thresh = filters.threshold_otsu(blurred)
             binary = blurred > thresh
             
+            # 【変更点2】Watershedによる分離時、1つの細胞が粉々に割れるのを防ぐ
             distance = ndimage.distance_transform_edt(binary)
-            coords = feature.peak_local_max(distance, footprint=np.ones((3, 3)), labels=binary)
+            # min_distance: ピーク（細胞の中心）同士は最低でも20ピクセル離れているというルール
+            coords = feature.peak_local_max(distance, min_distance=20, labels=binary)
             mask = np.zeros(distance.shape, dtype=bool)
             mask[tuple(coords.T)] = True
             markers, _ = ndimage.label(mask)
             labels = segmentation.watershed(-distance, markers, mask=binary)
             
+            # 【変更点3】面積フィルタを200から500に引き上げ、高解像度画像のゴミを弾く
             props = measure.regionprops(labels, intensity_image=img_array)
-            intensities = [p.mean_intensity for p in props if p.area >= 200]
+            intensities = [p.mean_intensity for p in props if p.area >= 500]
             all_intensities.extend(intensities)
             
         elif mode == "ai":
