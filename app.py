@@ -215,7 +215,7 @@ def main():
                             with cols_manual[j]:
                                 st.markdown(f"**📷 {target_names[j]} 画像解析**")
                                 ai_mode = st.radio("モード:", ["標準 (クラウド高速)", "AI (Cellpose・ローカル)"], key=f"mode_{i}_{j}", horizontal=True)
-                                uploaded_imgs = st.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
+                                uploaded_imgs = st.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg', 'czi'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
                                 
                                 if uploaded_imgs and st.button("🚀 解析を実行", key=f"btn_{i}_{j}"):
                                     with st.spinner("画像解析中..."):
