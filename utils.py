@@ -217,7 +217,7 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (CZI対応・AI/標準ハイブリッド)
+# ★ 画像解析エンジン (エラー探知機強化版)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
@@ -225,27 +225,34 @@ def analyze_images(uploaded_files, mode="standard"):
     
     for file in uploaded_files:
         file_bytes = file.read()
+        filename = file.name.lower()
         
         # ▼ CZIファイルの場合の専用ルート
-        if file.name.lower().endswith('.czi'):
-            import czifile
-            with czifile.CziFile(io.BytesIO(file_bytes)) as czi:
-                img_array = czi.asarray()
-            
-            # CZI特有の無駄な次元 (Time, Z軸など) を圧縮して消す
-            img_array = np.squeeze(img_array)
-            
-            # 複数の色(チャンネル)がある場合、強制的に1番目(インデックス0)の層を取得
-            if img_array.ndim > 2:
-                img_array = img_array[0]
+        if filename.endswith('.czi'):
+            try:
+                import czifile
+                with czifile.CziFile(io.BytesIO(file_bytes)) as czi:
+                    img_array = czi.asarray()
                 
-            img_array = img_array.astype(np.float32)
-            
+                # CZI特有の無駄な次元 (Time, Z軸など) を圧縮して消す
+                img_array = np.squeeze(img_array)
+                
+                # 複数の色(チャンネル)がある場合、強制的に1番目(インデックス0)の層を取得
+                if img_array.ndim > 2:
+                    img_array = img_array[0]
+                    
+                img_array = img_array.astype(np.float32)
+            except Exception as e:
+                raise RuntimeError(f"⚠️ CZIファイルの読み込みに失敗しました ({file.name})。詳細: {e}")
+                
         # ▼ 普通の画像(TIF, PNG等)の場合のルート
         else:
-            img = Image.open(io.BytesIO(file_bytes)).convert("L")
-            img_array = np.array(img)
-            
+            try:
+                img = Image.open(io.BytesIO(file_bytes)).convert("L")
+                img_array = np.array(img)
+            except Exception as e:
+                raise RuntimeError(f"⚠️ 画像ファイルの読み込みに失敗しました ({file.name})。詳細: {e}")
+                
         if mode == "standard":
             # ▼ アプローチ2：標準モード（Fijiスクリプトの完全再現＆高度化）
             from skimage import filters, measure, segmentation, feature
