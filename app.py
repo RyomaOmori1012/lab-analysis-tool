@@ -203,7 +203,9 @@ def main():
                     except Exception: st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
             else:
                 for i in range(num_cond):
-                    st.markdown(f"**条件 {i+1}**") if num_targets > 1 else None
+                    if num_targets > 1:
+                        st.markdown(f"**条件 {i+1}**")
+                        
                     if is_microscope:
                         col_up, col_dn = st.columns(2)
                         n_up = col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
@@ -223,13 +225,17 @@ def main():
                                         selected_mode = "standard" if "標準" in ai_mode else "ai"
                                         try:
                                             results = analyze_images(uploaded_imgs, mode=selected_mode)
-                                            st.session_state[f"t_val_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
+                                            # ★強制上書き：テキストエリアのキーに直接データを流し込む
+                                            st.session_state[f"t_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
                                             st.success(f"{len(results)}個の細胞を抽出しました！")
                                         except Exception as e:
                                             st.error(str(e))
                                 
-                                default_val = st.session_state.get(f"t_val_{i}_{j}", "")
-                                n_t_list.append(st.text_area(f'{target_names[j]}データ:', value=default_val, placeholder='縦にペースト または 画像から自動抽出', height=100, key=f"t_{i}_{j}"))
+                                # ★初期化処理：存在しない場合だけ空文字を作る
+                                if f"t_{i}_{j}" not in st.session_state:
+                                    st.session_state[f"t_{i}_{j}"] = ""
+                                    
+                                n_t_list.append(st.text_area(f'{target_names[j]}データ:', placeholder='縦にペースト または 画像から自動抽出', height=100, key=f"t_{i}_{j}"))
                         input_data.append((n_up, n_down, n_t_list, []))
                     elif num_targets == 1:
                         col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
