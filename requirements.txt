@@ -7,3 +7,5 @@ japanize-matplotlib
 scipy
 statsmodels
 openpyxl
+scikit-image
+Pillow
