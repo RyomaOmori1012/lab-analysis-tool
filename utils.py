@@ -217,29 +217,44 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (New)
+# ★ 画像解析エンジン (CZI対応・AI/標準ハイブリッド)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
     all_intensities = []
     
     for file in uploaded_files:
-        # 画像を読み込み、グレースケール（白黒）の数値配列に変換
-        img = Image.open(io.BytesIO(file.read())).convert("L")
-        img_array = np.array(img)
+        file_bytes = file.read()
         
+        # ▼ CZIファイルの場合の専用ルート
+        if file.name.lower().endswith('.czi'):
+            import czifile
+            with czifile.CziFile(io.BytesIO(file_bytes)) as czi:
+                img_array = czi.asarray()
+            
+            # CZI特有の無駄な次元 (Time, Z軸など) を圧縮して消す
+            img_array = np.squeeze(img_array)
+            
+            # 複数の色(チャンネル)がある場合、強制的に1番目(インデックス0)の層を取得
+            if img_array.ndim > 2:
+                img_array = img_array[0]
+                
+            img_array = img_array.astype(np.float32)
+            
+        # ▼ 普通の画像(TIF, PNG等)の場合のルート
+        else:
+            img = Image.open(io.BytesIO(file_bytes)).convert("L")
+            img_array = np.array(img)
+            
         if mode == "standard":
             # ▼ アプローチ2：標準モード（Fijiスクリプトの完全再現＆高度化）
             from skimage import filters, measure, segmentation, feature
             from scipy import ndimage
             
-            # ガウスぼかし
             blurred = filters.gaussian(img_array, sigma=3)
-            # 大津の二値化
             thresh = filters.threshold_otsu(blurred)
             binary = blurred > thresh
             
-            # Watershedによる分離
             distance = ndimage.distance_transform_edt(binary)
             coords = feature.peak_local_max(distance, footprint=np.ones((3, 3)), labels=binary)
             mask = np.zeros(distance.shape, dtype=bool)
@@ -247,7 +262,6 @@ def analyze_images(uploaded_files, mode="standard"):
             markers, _ = ndimage.label(mask)
             labels = segmentation.watershed(-distance, markers, mask=binary)
             
-            # ROIごとのMean（平均蛍光強度）を測定 (面積200以上)
             props = measure.regionprops(labels, intensity_image=img_array)
             intensities = [p.mean_intensity for p in props if p.area >= 200]
             all_intensities.extend(intensities)
@@ -257,12 +271,10 @@ def analyze_images(uploaded_files, mode="standard"):
             try:
                 from cellpose import models
                 from skimage import measure
-                # 細胞質認識モデルを起動（GPUがなくても動くように設定）
                 model = models.Cellpose(gpu=False, model_type='cyto')
                 masks, flows, styles, diams = model.eval(img_array, diameter=None, channels=[0,0])
                 
                 props = measure.regionprops(masks, intensity_image=img_array)
-                # AIは認識精度が高いため、面積の足切りは甘め（50）に設定
                 intensities = [p.mean_intensity for p in props if p.area >= 50]
                 all_intensities.extend(intensities)
             except ImportError:
