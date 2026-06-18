@@ -124,22 +124,35 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                 
         else:
             if var_equal:
-                test_name = "One-way ANOVA followed by Student's t-test (Holm)" if is_vs_control else "One-way ANOVA followed by Tukey's test"
                 try: _, p_anova = stats.f_oneway(*valid_data)
                 except: p_anova = np.nan
                 
                 if not np.isnan(p_anova) and p_anova < 0.05:
                     if is_vs_control:
-                        raw_p, comp_pairs = [], []
-                        for j in range(1, k):
-                            try:
-                                _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=True)
-                                raw_p.append(p); comp_pairs.append((0, j))
-                            except: pass
-                        if raw_p:
-                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                            pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                        # ★ここがDunnett検定の発動ポイントです★
+                        try:
+                            from scipy.stats import dunnett
+                            test_name = "One-way ANOVA followed by Dunnett's test"
+                            res = dunnett(*valid_data[1:], control=valid_data[0])
+                            p_vals = res.pvalue
+                            if np.isscalar(p_vals):
+                                p_vals = [p_vals]
+                            for j in range(1, k):
+                                pairs.append((0, j, p_vals[j-1]))
+                        except (ImportError, AttributeError):
+                            # 古い環境でDunnettが入っていない場合の安全装置
+                            test_name = "One-way ANOVA followed by Student's t-test (Holm)"
+                            raw_p, comp_pairs = [], []
+                            for j in range(1, k):
+                                try:
+                                    _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=True)
+                                    raw_p.append(p); comp_pairs.append((0, j))
+                                except: pass
+                            if raw_p:
+                                _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                                pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
                     else:
+                        test_name = "One-way ANOVA followed by Tukey's test"
                         all_v, all_g = [], []
                         for p_idx, d in enumerate(valid_data):
                             all_v.extend(d)
@@ -270,13 +283,10 @@ def analyze_images(uploaded_files, mode="standard"):
             try:
                 from cellpose import models
                 from skimage import measure
-                # ★修正箇所：CellposeModel に変更しました
                 model = models.CellposeModel(gpu=False, model_type='cyto')
-                # ★修正箇所：受け取る変数を3つにしました
                 masks, flows, styles = model.eval(img_array, diameter=None, channels=[0,0])
                 
                 props = measure.regionprops(masks, intensity_image=img_array)
-                # AIは認識精度が高いため、足切りは甘め(100)に設定
                 intensities = [p.mean_intensity for p in props if p.area >= 100]
                 all_intensities.extend(intensities)
             except Exception as e:
