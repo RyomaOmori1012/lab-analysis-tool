@@ -5,8 +5,12 @@ from itertools import combinations
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import re
+import io
+from PIL import Image
 
-# ★ エラーバー計算用のヘルパー関数
+# ==========================================
+# 統計・計算用ヘルパー関数
+# ==========================================
 def calc_error(data, err_type):
     arr = np.array(data)
     arr = arr[~np.isnan(arr)]
@@ -14,7 +18,6 @@ def calc_error(data, err_type):
     sd = np.std(arr, ddof=1)
     return sd / np.sqrt(len(arr)) if "SEM" in err_type else sd
 
-# ★ Welch's ANOVA & Games-Howell 検定計算エンジン
 def welch_anova_games_howell(data_list):
     k = len(data_list)
     ns = np.array([len(d) for d in data_list])
@@ -51,7 +54,6 @@ def welch_anova_games_howell(data_list):
             
     return p_anova, pairs
 
-# ★ 統合された最強の統計エンジン
 def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_paired):
     k = len(valid_data)
     pairs = []
@@ -213,10 +215,10 @@ def parse_idx(text, is_alpha=False):
                 res.append(ord(p.upper())-65 if is_alpha else int(p)-1)
     except Exception: pass 
     return list(set(res))
-# --- ここから下を utils.py の一番下に追加 ---
-import io
-from PIL import Image
 
+# ==========================================
+# ★ 画像解析エンジン (New)
+# ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
     all_intensities = []
@@ -254,11 +256,11 @@ def analyze_images(uploaded_files, mode="standard"):
             # ▼ アプローチ1：AIモード（Cellpose）
             try:
                 from cellpose import models
+                from skimage import measure
                 # 細胞質認識モデルを起動（GPUがなくても動くように設定）
                 model = models.Cellpose(gpu=False, model_type='cyto')
                 masks, flows, styles, diams = model.eval(img_array, diameter=None, channels=[0,0])
                 
-                from skimage import measure
                 props = measure.regionprops(masks, intensity_image=img_array)
                 # AIは認識精度が高いため、面積の足切りは甘め（50）に設定
                 intensities = [p.mean_intensity for p in props if p.area >= 50]
