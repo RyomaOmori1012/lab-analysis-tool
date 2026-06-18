@@ -9,3 +9,4 @@ statsmodels
 openpyxl
 scikit-image
 Pillow
+czifile
