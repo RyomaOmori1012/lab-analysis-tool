@@ -9,8 +9,8 @@ from renderers import render_mtt_analysis, render_single_target, render_multi_ta
 # ==========================================
 # グローバル設定
 # ==========================================
-st.set_page_config(page_title="実験データ自動解析ツール", layout="wide")
-st.title("🧪 実験データ自動解析ツール")
+st.set_page_config(page_title="実験データ自動解析ツール v2.0", layout="wide")
+st.title("🧪 実験データ自動解析ツール v2.0")
 
 st.markdown("""
     <style>
@@ -18,6 +18,9 @@ st.markdown("""
         white-space: pre !important;
         overflow-wrap: normal !important;
         overflow-x: scroll !important;
+    }
+    div[data-testid="stExpander"] {
+        border-color: #4ade80 !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -81,6 +84,9 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("🖌️ レイアウト・統計設定")
 
+    # ★追加：統計結果の表示ON/OFFマスタートグル
+    show_stats = st.sidebar.toggle("統計結果（★）をグラフに表示する", value=True)
+
     error_bar_type = st.sidebar.radio("エラーバーの種類:", ["SD (標準偏差)", "SEM (標準誤差)"])
 
     if not is_mtt:
@@ -125,7 +131,8 @@ def main():
         'bar_width': bar_width_input, 'var_equal': var_equal, 'is_vs_control': is_vs_control,
         'is_non_param': is_non_param, 'is_paired': is_paired, 'norm_mode': norm_mode,
         'is_grouped_test': is_grouped_test, 'u_label_name': u_label_name, 'd_label_name': d_label_name,
-        'paste_t_label': paste_t_label, 'paste_l_label': paste_l_label
+        'paste_t_label': paste_t_label, 'paste_l_label': paste_l_label,
+        'show_stats': show_stats # ★追加
     }
 
     # --- UI 入力画面 ---
@@ -150,9 +157,17 @@ def main():
             config['mtt_custom_xticks'] = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250')
             
             for i in range(num_cond):
-                p_name = st.text_input(f'プレート {i+1} 条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
-                p_data = st.text_area(f'プレート {i+1} データ (8行x12列):', placeholder='ここにペースト', height=220, key=f"pdata_{i}")
-                input_data.append((p_name, p_data))
+                # ★追加：コンテナで区切る
+                with st.container(border=True):
+                    st.markdown(f"**【 プレート {i+1} 】**")
+                    p_name = st.text_input(f'条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
+                    
+                    exclude_flag = False
+                    if show_stats:
+                        exclude_flag = st.checkbox("このプレートを統計検定から除外する", key=f"ex_{i}")
+                        
+                    p_data = st.text_area(f'データ (8行x12列):', placeholder='ここにペースト', height=150, key=f"pdata_{i}")
+                    input_data.append((p_name, p_data, exclude_flag))
         else:
             input_mode = "手動で1条件ずつ入力" if is_microscope else st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True)
             
@@ -192,32 +207,46 @@ def main():
                                 if i < len(t_lines_list[j]): raw_dict[name]['t'][j].extend([float(x) for x in re.sub(r'[\s,]+', ',', t_lines_list[j][i]).split(',') if x.strip()])
                                 if i < len(l_lines_list[j]): raw_dict[name]['l'][j].extend([float(x) for x in re.sub(r'[\s,]+', ',', l_lines_list[j][i]).split(',') if x.strip()])
 
-                        mapping_df = pd.DataFrame({"表示順 (1,2,3...)": range(1, len(raw_dict) + 1), "エクセルの名前 (読取専用)": list(raw_dict.keys()), u_label_name: list(raw_dict.keys()), f"{d_label_name} (空欄可)": [""] * len(raw_dict)})
+                        # ★追加：エクセルモード用の除外列
+                        mapping_df = pd.DataFrame({
+                            "表示順 (1,2,3...)": range(1, len(raw_dict) + 1), 
+                            "エクセルの名前 (読取専用)": list(raw_dict.keys()), 
+                            u_label_name: list(raw_dict.keys()), 
+                            f"{d_label_name} (空欄可)": [""] * len(raw_dict)
+                        })
+                        
+                        if show_stats:
+                            mapping_df["検定から除外"] = [False] * len(raw_dict)
+                            
                         edited_df = st.data_editor(mapping_df, hide_index=True, use_container_width=True, disabled=["エクセルの名前 (読取専用)"]).sort_values(by="表示順 (1,2,3...)")
                         
                         for _, row in edited_df.iterrows():
                             orig_name = row["エクセルの名前 (読取専用)"]
                             u_label = str(row[u_label_name]).strip() if pd.notna(row[u_label_name]) else ""
                             d_label = str(row[f"{d_label_name} (空欄可)"]).strip() if pd.notna(row[f"{d_label_name} (空欄可)"]) else ""
-                            input_data.append((u_label, d_label, ['\n'.join(map(str, raw_dict[orig_name]['t'][j])) for j in range(num_targets)], ['\n'.join(map(str, raw_dict[orig_name]['l'][j])) for j in range(num_targets)]))
+                            ex_flag = bool(row["検定から除外"]) if show_stats else False
+                            input_data.append((u_label, d_label, ['\n'.join(map(str, raw_dict[orig_name]['t'][j])) for j in range(num_targets)], ['\n'.join(map(str, raw_dict[orig_name]['l'][j])) for j in range(num_targets)], ex_flag))
                     except Exception: st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
             else:
                 for i in range(num_cond):
-                    if num_targets > 1:
-                        st.markdown(f"**条件 {i+1}**")
-                        
-                    if is_microscope:
+                    # ★追加：見やすいコンテナUIと失われたAIボタンの復元
+                    with st.container(border=True):
+                        st.markdown(f"**【 条件 {i+1} 】**")
                         col_up, col_dn = st.columns(2)
                         n_up = col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                         n_down = col_dn.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                         
-                        n_t_list = []
-                        cols_manual = st.columns(num_targets)
-                        for j in range(num_targets):
-                            with cols_manual[j]:
+                        exclude_flag = False
+                        if show_stats:
+                            exclude_flag = st.checkbox("この条件を統計検定から除外する", key=f"ex_{i}")
+
+                        if is_microscope:
+                            n_t_list = []
+                            for j in range(num_targets):
                                 st.markdown(f"**📷 {target_names[j]} 画像解析**")
-                                ai_mode = st.radio("モード:", ["標準 (クラウド高速)", "AI (Cellpose・ローカル)"], key=f"mode_{i}_{j}", horizontal=True)
-                                uploaded_imgs = st.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg', 'czi'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
+                                c_mode, c_upload = st.columns([1, 2])
+                                ai_mode = c_mode.radio("モード:", ["標準 (クラウド高速)", "AI (Cellpose・ローカル)"], key=f"mode_{i}_{j}", horizontal=True)
+                                uploaded_imgs = c_upload.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg', 'czi'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
                                 
                                 if uploaded_imgs and st.button("🚀 解析を実行", key=f"btn_{i}_{j}"):
                                     with st.spinner("画像解析中..."):
@@ -225,36 +254,36 @@ def main():
                                         selected_mode = "standard" if "標準" in ai_mode else "ai"
                                         try:
                                             results = analyze_images(uploaded_imgs, mode=selected_mode)
-                                            # ★強制上書き：テキストエリアのキーに直接データを流し込む
                                             st.session_state[f"t_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
                                             st.success(f"{len(results)}個の細胞を抽出しました！")
                                         except Exception as e:
                                             st.error(str(e))
                                 
-                                # ★初期化処理：存在しない場合だけ空文字を作る
                                 if f"t_{i}_{j}" not in st.session_state:
                                     st.session_state[f"t_{i}_{j}"] = ""
                                     
-                                n_t_list.append(st.text_area(f'{target_names[j]}データ:', placeholder='縦にペースト または 画像から自動抽出', height=100, key=f"t_{i}_{j}"))
-                        input_data.append((n_up, n_down, n_t_list, []))
-                    elif num_targets == 1:
-                        col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
-                        input_data.append((col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}"), col_dn.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}"), [col_t.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")], [col_l.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")]))
-                    else:
-                        col_up, col_dn = st.columns(2)
-                        n_up = col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-                        n_down = col_dn.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                        if is_common_loading:
-                            cols_manual = st.columns([1.5] + [1.5]*num_targets)
-                            n_l_list = [cols_manual[0].text_area(f'共通の {paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")] * num_targets
-                            input_data.append((n_up, n_down, [cols_manual[1+j].text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}") for j in range(num_targets)], n_l_list))
+                                n_t_list.append(st.text_area(f'{target_names[j]}データ:', placeholder='縦にペースト または 画像から自動抽出', height=130, key=f"t_{i}_{j}"))
+                            input_data.append((n_up, n_down, n_t_list, [], exclude_flag))
+                            
+                        elif num_targets == 1:
+                            col_t, col_l = st.columns(2)
+                            n_t = col_t.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=130, key=f"t_{i}")
+                            n_l = col_l.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=130, key=f"l_{i}")
+                            input_data.append((n_up, n_down, [n_t], [n_l], exclude_flag))
+                            
                         else:
-                            n_t_list, n_l_list = [], []
-                            for j in range(num_targets):
-                                ct, cl = st.columns(2)
-                                n_t_list.append(ct.text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}"))
-                                n_l_list.append(cl.text_area(f'対応する {loading_names[j]}:', placeholder='縦にペースト', height=100, key=f"l_{i}_{j}"))
-                            input_data.append((n_up, n_down, n_t_list, n_l_list))
+                            if is_common_loading:
+                                n_l_list = [st.text_area(f'共通の {paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")] * num_targets
+                                cols_manual = st.columns(num_targets)
+                                n_t_list = [cols_manual[j].text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}") for j in range(num_targets)]
+                                input_data.append((n_up, n_down, n_t_list, n_l_list, exclude_flag))
+                            else:
+                                n_t_list, n_l_list = [], []
+                                for j in range(num_targets):
+                                    ct, cl = st.columns(2)
+                                    n_t_list.append(ct.text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}"))
+                                    n_l_list.append(cl.text_area(f'対応する {loading_names[j]}:', placeholder='縦にペースト', height=100, key=f"l_{i}_{j}"))
+                                input_data.append((n_up, n_down, n_t_list, n_l_list, exclude_flag))
 
     # --- UI グラフ表示部 ---
     with col_graph:
