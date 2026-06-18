@@ -95,7 +95,6 @@ def main():
     if is_microscope:
         st.sidebar.markdown("---")
         st.sidebar.header("🔬 画像解析パラメータ (標準モード用)")
-        # ★変更：expanded=False にしてデフォルトで閉じるようにしました
         with st.sidebar.expander("❓ 調整のコツ（何が変わるの？）", expanded=False):
             st.markdown("""
             プレビュー画像の「黄色の輪郭線」を見ながら、以下の順に調整してください。
@@ -282,8 +281,11 @@ def main():
                                                 with st.spinner("画像処理中..."):
                                                     overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, sigma_val, sens_val, dist_val, area_val)
                                                 overlay_uint8 = (overlay_img * 255).astype(np.uint8)
-                                                st.image(overlay_uint8, caption=f"検出された細胞数: {cell_count}個", use_container_width=True)
+                                                st.image(overlay_uint8, caption=f"1枚目 ({first_img.name}) の検出細胞数: {cell_count}個", use_container_width=True)
                                                 st.info("💡 左のサイドバーのスライダーを動かすと、この画像の『黄色の輪郭線』がリアルタイムで変化します！納得いくまで調整してください。")
+                                                
+                                                if has_results:
+                                                    st.success(st.session_state.get(f"msg_{i}_{j}", "✨ 解析完了！"))
                                             except Exception as e:
                                                 st.error(f"プレビューエラー: {e}")
                                         else:
@@ -294,8 +296,8 @@ def main():
                                                     with st.spinner("結果画像を描画中..."):
                                                         overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, 0, 0, 0, 0)
                                                     overlay_uint8 = (overlay_img * 255).astype(np.uint8)
-                                                    st.image(overlay_uint8, caption=f"AIが検出した細胞: {cell_count}個", use_container_width=True)
-                                                    st.success("✨ AIによる高精度な細胞認識が完了しています。")
+                                                    st.image(overlay_uint8, caption=f"1枚目 ({first_img.name}) のAI検出細胞: {cell_count}個", use_container_width=True)
+                                                    st.success(st.session_state.get(f"msg_{i}_{j}", "✨ 解析完了！"))
                                                 except Exception as e:
                                                     st.error(f"結果画像エラー: {e}")
                                             else:
@@ -306,8 +308,11 @@ def main():
                                         from utils import analyze_images
                                         selected_mode = "standard" if "標準" in ai_mode else "ai"
                                         try:
-                                            results = analyze_images(uploaded_imgs, mode=selected_mode, sigma=sigma_val, sensitivity=sens_val, min_distance=dist_val, min_area=area_val)
+                                            # ★変更：タプルで受け取り、内訳メッセージを作成
+                                            results, summary_text = analyze_images(uploaded_imgs, mode=selected_mode, sigma=sigma_val, sensitivity=sens_val, min_distance=dist_val, min_area=area_val)
                                             st.session_state[f"t_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
+                                            # ★変更：成功メッセージに各ファイルごとの内訳を記録
+                                            st.session_state[f"msg_{i}_{j}"] = f"✨ 合計 {len(results)} 個の細胞を抽出しました！\n\n（内訳👉 {summary_text}）"
                                             st.rerun()
                                         except Exception as e:
                                             st.error(str(e))
