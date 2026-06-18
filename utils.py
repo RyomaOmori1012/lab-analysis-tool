@@ -217,7 +217,7 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (鬼のチューニング版)
+# ★ 画像解析エンジン (マイルド・チューニング版)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
@@ -252,12 +252,12 @@ def analyze_images(uploaded_files, mode="standard"):
             blurred = filters.gaussian(img_array, sigma=5)
             thresh = filters.threshold_otsu(blurred)
             
-            # 【変更点1】閾値を1.2倍厳しくして、暗いゴミや背景を完全に消す
-            binary = blurred > (thresh * 1.2)
+            # ★【変更点1】閾値の厳しさを1.2倍から「1.1倍」に緩和
+            binary = blurred > (thresh * 1.1)
             
             distance = ndimage.distance_transform_edt(binary)
-            # 【変更点2】細胞の中心同士の距離を40ピクセルに広げ、過剰分割を防ぐ
-            coords = feature.peak_local_max(distance, min_distance=40, labels=binary)
+            # ★【変更点2】細胞間の最低距離を40から「30」に緩和
+            coords = feature.peak_local_max(distance, min_distance=30, labels=binary)
             
             mask = np.zeros(distance.shape, dtype=bool)
             mask[tuple(coords.T)] = True
@@ -265,8 +265,8 @@ def analyze_images(uploaded_files, mode="standard"):
             labels = segmentation.watershed(-distance, markers, mask=binary)
             
             props = measure.regionprops(labels, intensity_image=img_array)
-            # 【変更点3】面積を1000以上に引き上げ、小さなゴミを除外する
-            intensities = [p.mean_intensity for p in props if p.area >= 1000]
+            # ★【変更点3】面積の足切りを1000から「600」に緩和（少し小さな細胞も拾う）
+            intensities = [p.mean_intensity for p in props if p.area >= 600]
             all_intensities.extend(intensities)
             
         elif mode == "ai":
