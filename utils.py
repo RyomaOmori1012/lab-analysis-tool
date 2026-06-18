@@ -299,7 +299,7 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
                 else:
                     masks, flows, styles = model.eval(img_array, diameter=None, channels=[0,0])
                 
-                # 実際の輝度計測は「元の高解像度画像」で行うため、精度は落ちません！
+                # 実際の輝度計測は「元の高解像度画像」で行うため、精度は落ちません
                 props = measure.regionprops(masks, intensity_image=img_array)
                 intensities = [p.mean_intensity for p in props if p.area >= 100]
                 all_intensities.extend(intensities)
