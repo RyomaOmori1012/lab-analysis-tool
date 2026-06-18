@@ -4,7 +4,6 @@ import numpy as np
 import re
 import traceback
 
-# ★ 先ほど作った renderers.py から描画関数を呼び出す
 from renderers import render_mtt_analysis, render_single_target, render_multi_target
 
 # ==========================================
@@ -118,7 +117,6 @@ def main():
 
     st.markdown("---")
     
-    # configディクショナリの構築（関数に渡すため）
     config = {
         'is_mtt': is_mtt, 'is_microscope': is_microscope, 'is_qpcr': is_qpcr, 'is_hplc': is_hplc,
         'num_targets': num_targets, 'target_names': target_names, 'loading_names': loading_names,
@@ -207,15 +205,32 @@ def main():
                 for i in range(num_cond):
                     st.markdown(f"**条件 {i+1}**") if num_targets > 1 else None
                     if is_microscope:
-                        col_up, col_dn, col_t = st.columns([1, 1, 3.0]) if num_targets == 1 else (*st.columns(2), None)
-                        n_up = (col_up if num_targets == 1 else st.columns(2)[0]).text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
-                        n_down = (col_dn if num_targets == 1 else st.columns(2)[1]).text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
+                        col_up, col_dn = st.columns(2)
+                        n_up = col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
+                        n_down = col_dn.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
                         
-                        if num_targets == 1:
-                            input_data.append((n_up, n_down, [col_t.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")], []))
-                        else:
-                            cols_manual = st.columns(num_targets)
-                            input_data.append((n_up, n_down, [cols_manual[j].text_area(f'{target_names[j]}:', placeholder='縦にペースト', height=100, key=f"t_{i}_{j}") for j in range(num_targets)], []))
+                        n_t_list = []
+                        cols_manual = st.columns(num_targets)
+                        for j in range(num_targets):
+                            with cols_manual[j]:
+                                st.markdown(f"**📷 {target_names[j]} 画像解析**")
+                                ai_mode = st.radio("モード:", ["標準 (クラウド高速)", "AI (Cellpose・ローカル)"], key=f"mode_{i}_{j}", horizontal=True)
+                                uploaded_imgs = st.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
+                                
+                                if uploaded_imgs and st.button("🚀 解析を実行", key=f"btn_{i}_{j}"):
+                                    with st.spinner("画像解析中..."):
+                                        from utils import analyze_images
+                                        selected_mode = "standard" if "標準" in ai_mode else "ai"
+                                        try:
+                                            results = analyze_images(uploaded_imgs, mode=selected_mode)
+                                            st.session_state[f"t_val_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
+                                            st.success(f"{len(results)}個の細胞を抽出しました！")
+                                        except Exception as e:
+                                            st.error(str(e))
+                                
+                                default_val = st.session_state.get(f"t_val_{i}_{j}", "")
+                                n_t_list.append(st.text_area(f'{target_names[j]}データ:', value=default_val, placeholder='縦にペースト または 画像から自動抽出', height=100, key=f"t_{i}_{j}"))
+                        input_data.append((n_up, n_down, n_t_list, []))
                     elif num_targets == 1:
                         col_up, col_dn, col_l, col_t = st.columns([1, 1, 1.5, 1.5])
                         input_data.append((col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}"), col_dn.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}"), [col_t.text_area(f'{paste_t_label}:', placeholder='縦にペースト', height=100, key=f"t_{i}")], [col_l.text_area(f'{paste_l_label}:', placeholder='縦にペースト', height=100, key=f"l_{i}")]))
