@@ -124,6 +124,7 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                 
         else:
             if var_equal:
+                test_name = "One-way ANOVA followed by Student's t-test (Holm)" if is_vs_control else "One-way ANOVA followed by Tukey's test"
                 try: _, p_anova = stats.f_oneway(*valid_data)
                 except: p_anova = np.nan
                 
@@ -228,13 +229,12 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (AI爆速化・内訳出力対応)
+# ★ 画像解析エンジン (内訳リストを返す最新版)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200):
     all_intensities = []
     summary_details = []
     
-    # ★変更点1：AIのモデル初期化をループの「外」に出して、爆発的に高速化しました！
     if mode == "ai":
         from cellpose import models, core
         from skimage import measure
@@ -243,7 +243,6 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
         model = models.CellposeModel(gpu=use_gpu, model_type='cyto')
                 
     for file in uploaded_files:
-        # ★変更点2：ポインタのズレによるファイルの空振りを防ぐため安全な `getvalue()` を使用
         file_bytes = file.getvalue()
         filename = file.name.lower()
         
@@ -284,7 +283,6 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
             props = measure.regionprops(labels, intensity_image=img_array)
             intensities = [p.mean_intensity for p in props if p.area >= min_area]
             all_intensities.extend(intensities)
-            # 1ファイルごとの結果を記録
             summary_details.append(f"{file.name}: {len(intensities)}個")
             
         elif mode == "ai":
@@ -303,12 +301,10 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
                 props = measure.regionprops(masks, intensity_image=img_array)
                 intensities = [p.mean_intensity for p in props if p.area >= 100]
                 all_intensities.extend(intensities)
-                # 1ファイルごとの結果を記録
                 summary_details.append(f"{file.name}: {len(intensities)}個")
             except Exception as e:
                 raise RuntimeError(f"⚠️ AI解析エラー ({file.name}): {e}")
                 
-    # ★変更点3：合計だけでなく内訳も返す
     return all_intensities, " / ".join(summary_details)
 
 # ==========================================
