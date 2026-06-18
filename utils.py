@@ -217,7 +217,7 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (過剰分割防止チューニング版)
+# ★ 画像解析エンジン (鬼のチューニング版)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
@@ -227,25 +227,17 @@ def analyze_images(uploaded_files, mode="standard"):
         file_bytes = file.read()
         filename = file.name.lower()
         
-        # ▼ CZIファイルの場合の専用ルート
         if filename.endswith('.czi'):
             try:
                 import czifile
                 with czifile.CziFile(io.BytesIO(file_bytes)) as czi:
                     img_array = czi.asarray()
-                
-                # CZI特有の無駄な次元 (Time, Z軸など) を圧縮して消す
                 img_array = np.squeeze(img_array)
-                
-                # 複数の色(チャンネル)がある場合、強制的に1番目(インデックス0)の層を取得
                 if img_array.ndim > 2:
                     img_array = img_array[0]
-                    
                 img_array = img_array.astype(np.float32)
             except Exception as e:
                 raise RuntimeError(f"⚠️ CZIファイルの読み込みに失敗しました ({file.name})。詳細: {e}")
-                
-        # ▼ 普通の画像(TIF, PNG等)の場合のルート
         else:
             try:
                 img = Image.open(io.BytesIO(file_bytes)).convert("L")
@@ -254,31 +246,30 @@ def analyze_images(uploaded_files, mode="standard"):
                 raise RuntimeError(f"⚠️ 画像ファイルの読み込みに失敗しました ({file.name})。詳細: {e}")
                 
         if mode == "standard":
-            # ▼ アプローチ2：標準モード（Fijiスクリプトの完全再現＆高度化）
             from skimage import filters, measure, segmentation, feature
             from scipy import ndimage
             
-            # 【変更点1】少し強めにぼかして、細胞内の細かい明るさのムラを消す
             blurred = filters.gaussian(img_array, sigma=5)
             thresh = filters.threshold_otsu(blurred)
-            binary = blurred > thresh
             
-            # 【変更点2】Watershedによる分離時、1つの細胞が粉々に割れるのを防ぐ
+            # 【変更点1】閾値を1.2倍厳しくして、暗いゴミや背景を完全に消す
+            binary = blurred > (thresh * 1.2)
+            
             distance = ndimage.distance_transform_edt(binary)
-            # min_distance: ピーク（細胞の中心）同士は最低でも20ピクセル離れているというルール
-            coords = feature.peak_local_max(distance, min_distance=20, labels=binary)
+            # 【変更点2】細胞の中心同士の距離を40ピクセルに広げ、過剰分割を防ぐ
+            coords = feature.peak_local_max(distance, min_distance=40, labels=binary)
+            
             mask = np.zeros(distance.shape, dtype=bool)
             mask[tuple(coords.T)] = True
             markers, _ = ndimage.label(mask)
             labels = segmentation.watershed(-distance, markers, mask=binary)
             
-            # 【変更点3】面積フィルタを200から500に引き上げ、高解像度画像のゴミを弾く
             props = measure.regionprops(labels, intensity_image=img_array)
-            intensities = [p.mean_intensity for p in props if p.area >= 500]
+            # 【変更点3】面積を1000以上に引き上げ、小さなゴミを除外する
+            intensities = [p.mean_intensity for p in props if p.area >= 1000]
             all_intensities.extend(intensities)
             
         elif mode == "ai":
-            # ▼ アプローチ1：AIモード（Cellpose）
             try:
                 from cellpose import models
                 from skimage import measure
