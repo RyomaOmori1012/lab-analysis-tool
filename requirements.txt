@@ -10,3 +10,4 @@ openpyxl
 scikit-image
 Pillow
 czifile
+imagecodecs
