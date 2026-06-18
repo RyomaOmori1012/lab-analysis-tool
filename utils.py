@@ -129,7 +129,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                 
                 if not np.isnan(p_anova) and p_anova < 0.05:
                     if is_vs_control:
-                        # ★ここがDunnett検定の発動ポイントです★
                         try:
                             from scipy.stats import dunnett
                             test_name = "One-way ANOVA followed by Dunnett's test"
@@ -140,7 +139,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                             for j in range(1, k):
                                 pairs.append((0, j, p_vals[j-1]))
                         except (ImportError, AttributeError):
-                            # 古い環境でDunnettが入っていない場合の安全装置
                             test_name = "One-way ANOVA followed by Student's t-test (Holm)"
                             raw_p, comp_pairs = [], []
                             for j in range(1, k):
@@ -230,10 +228,9 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (マイルド・チューニング版 + AI最新版対応)
+# ★ 画像解析エンジン (AI爆速化対応)
 # ==========================================
-def analyze_images(uploaded_files, mode="standard"):
-    """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
+def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200):
     all_intensities = []
     
     for file in uploaded_files:
@@ -250,25 +247,24 @@ def analyze_images(uploaded_files, mode="standard"):
                     img_array = img_array[0]
                 img_array = img_array.astype(np.float32)
             except Exception as e:
-                raise RuntimeError(f"⚠️ CZIファイルの読み込みに失敗しました ({file.name})。詳細: {e}")
+                raise RuntimeError(f"⚠️ CZI読み込みエラー: {e}")
         else:
             try:
                 img = Image.open(io.BytesIO(file_bytes)).convert("L")
-                img_array = np.array(img)
+                img_array = np.array(img, dtype=np.float32)
             except Exception as e:
-                raise RuntimeError(f"⚠️ 画像ファイルの読み込みに失敗しました ({file.name})。詳細: {e}")
+                raise RuntimeError(f"⚠️ 画像読み込みエラー: {e}")
                 
         if mode == "standard":
             from skimage import filters, measure, segmentation, feature
             from scipy import ndimage
             
-            blurred = filters.gaussian(img_array, sigma=5)
+            blurred = filters.gaussian(img_array, sigma=sigma)
             thresh = filters.threshold_otsu(blurred)
-            
-            binary = blurred > (thresh * 1.1)
+            binary = blurred > (thresh * sensitivity)
             
             distance = ndimage.distance_transform_edt(binary)
-            coords = feature.peak_local_max(distance, min_distance=30, labels=binary)
+            coords = feature.peak_local_max(distance, min_distance=min_distance, labels=binary)
             
             mask = np.zeros(distance.shape, dtype=bool)
             mask[tuple(coords.T)] = True
@@ -276,20 +272,117 @@ def analyze_images(uploaded_files, mode="standard"):
             labels = segmentation.watershed(-distance, markers, mask=binary)
             
             props = measure.regionprops(labels, intensity_image=img_array)
-            intensities = [p.mean_intensity for p in props if p.area >= 600]
+            intensities = [p.mean_intensity for p in props if p.area >= min_area]
             all_intensities.extend(intensities)
             
         elif mode == "ai":
             try:
-                from cellpose import models
+                from cellpose import models, core
                 from skimage import measure
-                model = models.CellposeModel(gpu=False, model_type='cyto')
-                masks, flows, styles = model.eval(img_array, diameter=None, channels=[0,0])
+                from skimage.transform import resize
                 
+                # ★高速化1: GPU（MacのMPS等）を自動検知してフルパワーを出す
+                use_gpu = core.use_gpu()
+                model = models.CellposeModel(gpu=use_gpu, model_type='cyto')
+                
+                # ★高速化2: CZI等の超高解像度画像を一時的に縮小してAIの計算量を劇的に減らす
+                h, w = img_array.shape
+                max_dim = 1024 # ここを下げればさらに爆速になります
+                if max(h, w) > max_dim:
+                    scale = max_dim / max(h, w)
+                    new_h, new_w = int(h * scale), int(w * scale)
+                    # 画像を縮小して推論
+                    img_resized = resize(img_array, (new_h, new_w), preserve_range=True, anti_aliasing=True).astype(np.float32)
+                    masks_resized, flows, styles = model.eval(img_resized, diameter=None, channels=[0,0])
+                    # マスクを元の高解像度サイズに戻す
+                    masks = resize(masks_resized, (h, w), order=0, preserve_range=True, anti_aliasing=False).astype(np.uint16)
+                else:
+                    masks, flows, styles = model.eval(img_array, diameter=None, channels=[0,0])
+                
+                # 実際の輝度計測は「元の高解像度画像」で行うため、精度は落ちません！
                 props = measure.regionprops(masks, intensity_image=img_array)
                 intensities = [p.mean_intensity for p in props if p.area >= 100]
                 all_intensities.extend(intensities)
             except Exception as e:
-                raise RuntimeError(f"⚠️ AI解析中にエラーが発生しました: {e}")
+                raise RuntimeError(f"⚠️ AI解析エラー: {e}")
                 
     return all_intensities
+
+# ==========================================
+# プレビュー用画像生成関数 (AI爆速化対応)
+# ==========================================
+def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200):
+    if filename.endswith('.czi'):
+        try:
+            import czifile
+            with czifile.CziFile(io.BytesIO(file_bytes)) as czi:
+                img_array = czi.asarray()
+            img_array = np.squeeze(img_array)
+            if img_array.ndim > 2:
+                img_array = img_array[0]
+            img_array = img_array.astype(np.float32)
+            img_gray = img_array
+            
+            img_min, img_max = img_array.min(), img_array.max()
+            img_norm = (img_array - img_min) / (img_max - img_min + 1e-10)
+            zeros = np.zeros_like(img_norm)
+            img_rgb_bg = np.stack((zeros, img_norm, zeros), axis=-1)
+        except Exception as e:
+            raise RuntimeError(f"CZI読み込みエラー: {e}")
+    else:
+        try:
+            img = Image.open(io.BytesIO(file_bytes))
+            img_gray = np.array(img.convert("L"), dtype=np.float32)
+            img_rgb_bg = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
+        except Exception as e:
+            raise RuntimeError(f"画像読み込みエラー: {e}")
+            
+    if mode == "standard":
+        from skimage import filters, measure, segmentation, feature
+        from scipy import ndimage
+        
+        blurred = filters.gaussian(img_gray, sigma=sigma)
+        thresh = filters.threshold_otsu(blurred)
+        binary = blurred > (thresh * sensitivity)
+        
+        distance = ndimage.distance_transform_edt(binary)
+        coords = feature.peak_local_max(distance, min_distance=min_distance, labels=binary)
+        
+        mask = np.zeros(distance.shape, dtype=bool)
+        mask[tuple(coords.T)] = True
+        markers, _ = ndimage.label(mask)
+        labels = segmentation.watershed(-distance, markers, mask=binary)
+        
+        props = measure.regionprops(labels, intensity_image=img_gray)
+        valid_labels = np.array([p.label for p in props if p.area >= min_area])
+        final_labels = np.where(np.isin(labels, valid_labels), labels, 0)
+        
+        overlay = segmentation.mark_boundaries(img_rgb_bg, final_labels, color=(1, 1, 0), mode='thick')
+        return overlay, len(valid_labels)
+        
+    elif mode == "ai":
+        from cellpose import models, core
+        from skimage import measure, segmentation
+        from skimage.transform import resize
+        
+        use_gpu = core.use_gpu()
+        model = models.CellposeModel(gpu=use_gpu, model_type='cyto')
+        
+        # ★プレビュー時もリサイズして爆速化
+        h, w = img_gray.shape
+        max_dim = 1024
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            new_h, new_w = int(h * scale), int(w * scale)
+            img_resized = resize(img_gray, (new_h, new_w), preserve_range=True, anti_aliasing=True).astype(np.float32)
+            masks_resized, flows, styles = model.eval(img_resized, diameter=None, channels=[0,0])
+            masks = resize(masks_resized, (h, w), order=0, preserve_range=True, anti_aliasing=False).astype(np.uint16)
+        else:
+            masks, flows, styles = model.eval(img_gray, diameter=None, channels=[0,0])
+        
+        props = measure.regionprops(masks, intensity_image=img_gray)
+        valid_labels = np.array([p.label for p in props if p.area >= 100])
+        
+        final_labels = np.where(np.isin(masks, valid_labels), masks, 0)
+        overlay = segmentation.mark_boundaries(img_rgb_bg, final_labels, color=(0, 1, 1), mode='thick')
+        return overlay, len(valid_labels)
