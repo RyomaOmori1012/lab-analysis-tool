@@ -213,3 +213,57 @@ def parse_idx(text, is_alpha=False):
                 res.append(ord(p.upper())-65 if is_alpha else int(p)-1)
     except Exception: pass 
     return list(set(res))
+# --- ここから下を utils.py の一番下に追加 ---
+import io
+from PIL import Image
+
+def analyze_images(uploaded_files, mode="standard"):
+    """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
+    all_intensities = []
+    
+    for file in uploaded_files:
+        # 画像を読み込み、グレースケール（白黒）の数値配列に変換
+        img = Image.open(io.BytesIO(file.read())).convert("L")
+        img_array = np.array(img)
+        
+        if mode == "standard":
+            # ▼ アプローチ2：標準モード（Fijiスクリプトの完全再現＆高度化）
+            from skimage import filters, measure, segmentation, feature
+            from scipy import ndimage
+            
+            # ガウスぼかし
+            blurred = filters.gaussian(img_array, sigma=3)
+            # 大津の二値化
+            thresh = filters.threshold_otsu(blurred)
+            binary = blurred > thresh
+            
+            # Watershedによる分離
+            distance = ndimage.distance_transform_edt(binary)
+            coords = feature.peak_local_max(distance, footprint=np.ones((3, 3)), labels=binary)
+            mask = np.zeros(distance.shape, dtype=bool)
+            mask[tuple(coords.T)] = True
+            markers, _ = ndimage.label(mask)
+            labels = segmentation.watershed(-distance, markers, mask=binary)
+            
+            # ROIごとのMean（平均蛍光強度）を測定 (面積200以上)
+            props = measure.regionprops(labels, intensity_image=img_array)
+            intensities = [p.mean_intensity for p in props if p.area >= 200]
+            all_intensities.extend(intensities)
+            
+        elif mode == "ai":
+            # ▼ アプローチ1：AIモード（Cellpose）
+            try:
+                from cellpose import models
+                # 細胞質認識モデルを起動（GPUがなくても動くように設定）
+                model = models.Cellpose(gpu=False, model_type='cyto')
+                masks, flows, styles, diams = model.eval(img_array, diameter=None, channels=[0,0])
+                
+                from skimage import measure
+                props = measure.regionprops(masks, intensity_image=img_array)
+                # AIは認識精度が高いため、面積の足切りは甘め（50）に設定
+                intensities = [p.mean_intensity for p in props if p.area >= 50]
+                all_intensities.extend(intensities)
+            except ImportError:
+                raise ImportError("⚠️ Cellposeがインストールされていません。ローカルPCで起動してください。")
+                
+    return all_intensities
