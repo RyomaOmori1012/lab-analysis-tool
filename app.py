@@ -26,6 +26,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
+# プレビュー画像のキャッシュ
+# ==========================================
+@st.cache_data(show_spinner=False, max_entries=5)
+def get_cached_preview(file_bytes, filename, mode, sigma, sens, dist, area):
+    from utils import generate_preview_image
+    # AIモードの時はスライダーの値を強制的にゼロにしてキャッシュを共通化
+    if mode == "ai":
+        sigma, sens, dist, area = 0, 0, 0, 0
+    return generate_preview_image(file_bytes, filename, mode, sigma, sens, dist, area)
+
+# ==========================================
 # メイン実行関数
 # ==========================================
 def main():
@@ -81,12 +92,37 @@ def main():
     y_label_full = y_label_def if (is_mtt or is_microscope or is_hplc or num_targets > 1) else f"{y_label_def}\n[{t_name} / {l_name}]"
     ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height=68)
 
+    if is_microscope:
+        st.sidebar.markdown("---")
+        st.sidebar.header("🔬 画像解析パラメータ (標準モード用)")
+        # ★変更：expanded=False にしてデフォルトで閉じるようにしました
+        with st.sidebar.expander("❓ 調整のコツ（何が変わるの？）", expanded=False):
+            st.markdown("""
+            プレビュー画像の「黄色の輪郭線」を見ながら、以下の順に調整してください。
+            
+            1. **閾値の感度**
+               - **小さく**：暗い・淡い細胞も拾います（モヤも拾いやすくなります）。
+               - **大きく**：明るく強い細胞だけを厳選します。
+            2. **細胞間の最小距離**
+               - **大きく**：1つの大きな細胞が複数に割れてしまう（過分割）のを防ぎます。
+               - **小さく**：密集した細胞を1つずつ切り分けやすくなります。
+            3. **細胞の最小サイズ**
+               - ゴミ取り用です。細胞ではない小さな破片を消したい時に数値を上げます。
+            4. **ぼかしの強さ**
+               - ノイズによるザラつきで輪郭が乱れる場合に少し上げます。
+            """)
+            
+        sigma_val = st.sidebar.slider("1. ぼかしの強さ (Sigma):", min_value=0.5, max_value=10.0, value=1.5, step=0.5)
+        sens_val = st.sidebar.slider("2. 閾値の感度 (Sensitivity):", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
+        dist_val = st.sidebar.slider("3. 細胞間の最小距離 (ピクセル):", min_value=5, max_value=150, value=20, step=5)
+        area_val = st.sidebar.slider("4. 細胞の最小サイズ (ピクセル):", min_value=10, max_value=2000, value=200, step=10)
+    else:
+        sigma_val, sens_val, dist_val, area_val = 1.5, 1.0, 20, 200
+
     st.sidebar.markdown("---")
     st.sidebar.header("🖌️ レイアウト・統計設定")
 
-    # ★追加：統計結果の表示ON/OFFマスタートグル
     show_stats = st.sidebar.toggle("統計結果（★）をグラフに表示する", value=True)
-
     error_bar_type = st.sidebar.radio("エラーバーの種類:", ["SD (標準偏差)", "SEM (標準誤差)"])
 
     if not is_mtt:
@@ -132,10 +168,9 @@ def main():
         'is_non_param': is_non_param, 'is_paired': is_paired, 'norm_mode': norm_mode,
         'is_grouped_test': is_grouped_test, 'u_label_name': u_label_name, 'd_label_name': d_label_name,
         'paste_t_label': paste_t_label, 'paste_l_label': paste_l_label,
-        'show_stats': show_stats # ★追加
+        'show_stats': show_stats
     }
 
-    # --- UI 入力画面 ---
     col_input, col_graph = st.columns([1.2, 1.0], gap="large")
     input_data = []
 
@@ -157,15 +192,10 @@ def main():
             config['mtt_custom_xticks'] = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250')
             
             for i in range(num_cond):
-                # ★追加：コンテナで区切る
                 with st.container(border=True):
                     st.markdown(f"**【 プレート {i+1} 】**")
                     p_name = st.text_input(f'条件名:', placeholder=f'例: プレート{i+1}', key=f"pname_{i}")
-                    
-                    exclude_flag = False
-                    if show_stats:
-                        exclude_flag = st.checkbox("このプレートを統計検定から除外する", key=f"ex_{i}")
-                        
+                    exclude_flag = st.checkbox("このプレートを統計検定から除外する", key=f"ex_{i}") if show_stats else False
                     p_data = st.text_area(f'データ (8行x12列):', placeholder='ここにペースト', height=150, key=f"pdata_{i}")
                     input_data.append((p_name, p_data, exclude_flag))
         else:
@@ -207,16 +237,13 @@ def main():
                                 if i < len(t_lines_list[j]): raw_dict[name]['t'][j].extend([float(x) for x in re.sub(r'[\s,]+', ',', t_lines_list[j][i]).split(',') if x.strip()])
                                 if i < len(l_lines_list[j]): raw_dict[name]['l'][j].extend([float(x) for x in re.sub(r'[\s,]+', ',', l_lines_list[j][i]).split(',') if x.strip()])
 
-                        # ★追加：エクセルモード用の除外列
                         mapping_df = pd.DataFrame({
                             "表示順 (1,2,3...)": range(1, len(raw_dict) + 1), 
                             "エクセルの名前 (読取専用)": list(raw_dict.keys()), 
                             u_label_name: list(raw_dict.keys()), 
                             f"{d_label_name} (空欄可)": [""] * len(raw_dict)
                         })
-                        
-                        if show_stats:
-                            mapping_df["検定から除外"] = [False] * len(raw_dict)
+                        if show_stats: mapping_df["検定から除外"] = [False] * len(raw_dict)
                             
                         edited_df = st.data_editor(mapping_df, hide_index=True, use_container_width=True, disabled=["エクセルの名前 (読取専用)"]).sort_values(by="表示順 (1,2,3...)")
                         
@@ -229,16 +256,12 @@ def main():
                     except Exception: st.error("データの読み取りに失敗しました。数字や文字の形式を確認してください。")
             else:
                 for i in range(num_cond):
-                    # ★追加：見やすいコンテナUIと失われたAIボタンの復元
                     with st.container(border=True):
                         st.markdown(f"**【 条件 {i+1} 】**")
                         col_up, col_dn = st.columns(2)
                         n_up = col_up.text_input(f'{u_label_name}:', placeholder='Control' if i==0 else f'Cond_{i+1}', key=f"up_{i}")
                         n_down = col_dn.text_input(f'{d_label_name}:', placeholder='(空欄可)', key=f"dn_{i}")
-                        
-                        exclude_flag = False
-                        if show_stats:
-                            exclude_flag = st.checkbox("この条件を統計検定から除外する", key=f"ex_{i}")
+                        exclude_flag = st.checkbox("この条件を統計検定から除外する", key=f"ex_{i}") if show_stats else False
 
                         if is_microscope:
                             n_t_list = []
@@ -248,14 +271,44 @@ def main():
                                 ai_mode = c_mode.radio("モード:", ["標準 (クラウド高速)", "AI (Cellpose・ローカル)"], key=f"mode_{i}_{j}", horizontal=True)
                                 uploaded_imgs = c_upload.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg', 'czi'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
                                 
-                                if uploaded_imgs and st.button("🚀 解析を実行", key=f"btn_{i}_{j}"):
-                                    with st.spinner("画像解析中..."):
+                                if uploaded_imgs:
+                                    selected_mode = "standard" if "標準" in ai_mode else "ai"
+                                    has_results = st.session_state.get(f"t_{i}_{j}", "") != ""
+                                    
+                                    with st.expander("👁️ 抽出プレビュー (1枚目の画像で確認)", expanded=(selected_mode == "standard" or has_results)):
+                                        if selected_mode == "standard":
+                                            try:
+                                                first_img = uploaded_imgs[0]
+                                                with st.spinner("画像処理中..."):
+                                                    overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, sigma_val, sens_val, dist_val, area_val)
+                                                overlay_uint8 = (overlay_img * 255).astype(np.uint8)
+                                                st.image(overlay_uint8, caption=f"検出された細胞数: {cell_count}個", use_container_width=True)
+                                                st.info("💡 左のサイドバーのスライダーを動かすと、この画像の『黄色の輪郭線』がリアルタイムで変化します！納得いくまで調整してください。")
+                                            except Exception as e:
+                                                st.error(f"プレビューエラー: {e}")
+                                        else:
+                                            # AIモードの場合
+                                            if has_results:
+                                                try:
+                                                    first_img = uploaded_imgs[0]
+                                                    with st.spinner("結果画像を描画中..."):
+                                                        overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, 0, 0, 0, 0)
+                                                    overlay_uint8 = (overlay_img * 255).astype(np.uint8)
+                                                    st.image(overlay_uint8, caption=f"AIが検出した細胞: {cell_count}個", use_container_width=True)
+                                                    st.success("✨ AIによる高精度な細胞認識が完了しています。")
+                                                except Exception as e:
+                                                    st.error(f"結果画像エラー: {e}")
+                                            else:
+                                                st.info("🧠 AIモードが選択されています。パソコンへの負荷を防ぐため、事前のプレビュー計算は一時停止しています。\n\n下の赤いボタンから解析を実行すると、完了後に抽出結果の画像が表示されます。")
+
+                                if uploaded_imgs and st.button("🚀 以上の設定で全画像を解析実行", key=f"btn_{i}_{j}", type="primary"):
+                                    with st.spinner("全画像の解析中...（数十秒〜数分かかる場合があります）" if ("標準" not in ai_mode) else "全画像の解析中..."):
                                         from utils import analyze_images
                                         selected_mode = "standard" if "標準" in ai_mode else "ai"
                                         try:
-                                            results = analyze_images(uploaded_imgs, mode=selected_mode)
+                                            results = analyze_images(uploaded_imgs, mode=selected_mode, sigma=sigma_val, sensitivity=sens_val, min_distance=dist_val, min_area=area_val)
                                             st.session_state[f"t_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
-                                            st.success(f"{len(results)}個の細胞を抽出しました！")
+                                            st.rerun()
                                         except Exception as e:
                                             st.error(str(e))
                                 
