@@ -217,7 +217,7 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (マイルド・チューニング版)
+# ★ 画像解析エンジン (マイルド・チューニング版 + AI最新版対応)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard"):
     """アップロードされた複数画像を解析し、蛍光強度のリストを返す"""
@@ -252,11 +252,9 @@ def analyze_images(uploaded_files, mode="standard"):
             blurred = filters.gaussian(img_array, sigma=5)
             thresh = filters.threshold_otsu(blurred)
             
-            # ★【変更点1】閾値の厳しさを1.2倍から「1.1倍」に緩和
             binary = blurred > (thresh * 1.1)
             
             distance = ndimage.distance_transform_edt(binary)
-            # ★【変更点2】細胞間の最低距離を40から「30」に緩和
             coords = feature.peak_local_max(distance, min_distance=30, labels=binary)
             
             mask = np.zeros(distance.shape, dtype=bool)
@@ -265,7 +263,6 @@ def analyze_images(uploaded_files, mode="standard"):
             labels = segmentation.watershed(-distance, markers, mask=binary)
             
             props = measure.regionprops(labels, intensity_image=img_array)
-            # ★【変更点3】面積の足切りを1000から「600」に緩和（少し小さな細胞も拾う）
             intensities = [p.mean_intensity for p in props if p.area >= 600]
             all_intensities.extend(intensities)
             
@@ -273,13 +270,16 @@ def analyze_images(uploaded_files, mode="standard"):
             try:
                 from cellpose import models
                 from skimage import measure
-                model = models.Cellpose(gpu=False, model_type='cyto')
-                masks, flows, styles, diams = model.eval(img_array, diameter=None, channels=[0,0])
+                # ★修正箇所：CellposeModel に変更しました
+                model = models.CellposeModel(gpu=False, model_type='cyto')
+                # ★修正箇所：受け取る変数を3つにしました
+                masks, flows, styles = model.eval(img_array, diameter=None, channels=[0,0])
                 
                 props = measure.regionprops(masks, intensity_image=img_array)
-                intensities = [p.mean_intensity for p in props if p.area >= 50]
+                # AIは認識精度が高いため、足切りは甘め(100)に設定
+                intensities = [p.mean_intensity for p in props if p.area >= 100]
                 all_intensities.extend(intensities)
-            except ImportError:
-                raise ImportError("⚠️ Cellposeがインストールされていません。ローカルPCで起動してください。")
+            except Exception as e:
+                raise RuntimeError(f"⚠️ AI解析中にエラーが発生しました: {e}")
                 
     return all_intensities
