@@ -1,1 +1,239 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import japanize_matplotlib
+import matplotlib.ticker as ticker
+import io
+import re
+import warnings
 
+warnings.filterwarnings('ignore')
+
+from utils import calc_error, run_statistical_test, parse_plate, parse_idx
+
+# --- フォントのグローバル設定 ---
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = ['Arial', 'MS PGothic', 'IPAexGothic']
+plt.rcParams['mathtext.fontset'] = 'custom'
+plt.rcParams['mathtext.rm'] = 'Arial'
+plt.rcParams['mathtext.it'] = 'Arial:italic'
+plt.rcParams['mathtext.bf'] = 'Arial:bold'
+
+def fix_svg_font(svg_bytes):
+    svg_str = svg_bytes.getvalue().decode('utf-8')
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial', svg_str)
+    return svg_str.encode('utf-8')
+
+def render_mtt_analysis(input_data, config):
+    if config.get('svg_font_path', True):
+        plt.rcParams['svg.fonttype'] = 'path'
+    else:
+        plt.rcParams['svg.fonttype'] = 'none'
+
+    i_rows, i_cols = parse_idx(config['mtt_ignore_row'], True), parse_idx(config['mtt_ignore_col'], False)
+    b_cols, c_cols, s_cols = parse_idx(config['mtt_blank_col'], False), parse_idx(config['mtt_control_col'], False), parse_idx(config['mtt_sample_cols'], False)
+    s_cols.sort()
+    valid_rows = [r for r in range(8) if r not in i_rows]
+    
+    safe_dilution = config['mtt_dilution'] if config['mtt_dilution'] != 0 else 1.0
+    conc_vals_plot = [config['mtt_start_conc'] / (safe_dilution ** i) for i in range(len(s_cols))][::-1]
+    s_cols_plot = s_cols[::-1] if "左が高濃度" in config['mtt_conc_direction'] else s_cols
+    
+    plates_data, plate_names, ctrl_err_pct_list = [], [], []
+    exclude_flags = []
+    
+    for idx, item in enumerate(input_data):
+        pn, pd_text = item[0], item[1]
+        exclude_flag = item[2] if len(item) > 2 else False
+        exclude_flags.append(exclude_flag)
+        
+        arr = parse_plate(pd_text); plate_names.append(pn or f"Plate {idx+1}")
+        blank_vals = [arr[r, c] for r in valid_rows for c in b_cols if c not in i_cols and not np.isnan(arr[r, c])]
+        blank_mean = np.nanmean(blank_vals) if blank_vals else 0.0
+        
+        ctrl_vals = [arr[r, c] - blank_mean for r in valid_rows for c in c_cols if c not in i_cols and not np.isnan(arr[r, c])]
+        ctrl_mean = np.nanmean(ctrl_vals) if len(ctrl_vals) > 0 else np.nan
+        
+        c_err = calc_error(ctrl_vals, config['error_bar_type'])
+        ctrl_err_pct_list.append((c_err / ctrl_mean) * 100 if not np.isnan(ctrl_mean) and ctrl_mean != 0 else 0)
+        
+        if np.isnan(ctrl_mean) or ctrl_mean == 0: plates_data.append(np.full((8, 12), np.nan))
+        else: plates_data.append((arr - blank_mean) / ctrl_mean * 100)
+    
+    num_p = len(plates_data)
+    indiv_figs = []
+    
+    for i in range(num_p):
+        fig_i, ax_i = plt.subplots(figsize=(6, 4))
+        fig_i.patch.set_facecolor('white'); ax_i.set_facecolor('white')
+        
+        means_i = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+        errs_i = [calc_error(plates_data[i][valid_rows, c], config['error_bar_type']) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+        
+        ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
+        ax_i.set_xscale('log')
+        
+        mtt_max_y_i = 125.0
+        for m, e in zip(means_i, errs_i):
+            if not np.isnan(m) and not np.isnan(e): mtt_max_y_i = max(mtt_max_y_i, (m + e) * 1.15)
+        ax_i.set_ylim(bottom=0, top=mtt_max_y_i)
+        
+        if config.get('y_tick_interval', 0) > 0:
+            ax_i.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
+        else:
+            ax_i.yaxis.set_major_locator(ticker.AutoLocator())
+            
+        for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
+        ax_i.minorticks_off()
+        
+        if config['mtt_custom_xticks'].strip() and len(conc_vals_plot) > 0:
+            try:
+                c_ticks = [float(x.strip()) for x in config['mtt_custom_xticks'].split(',') if x.strip()]
+                all_x = conc_vals_plot + c_ticks
+                min_x, max_x = min(all_x), max(all_x)
+                low_exp, high_exp = int(np.floor(np.log10(min_x))), int(np.ceil(np.log10(max_x)))
+                combined_ticks = sorted(list(set([10**e for e in range(low_exp, high_exp + 1)] + c_ticks)))
+                ax_i.set_xticks(combined_ticks)
+                ax_i.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
+                ax_i.set_xlim(min_x * 0.8, max_x * 1.2)
+            except Exception: pass
+        else: ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
+            
+        ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
+        ax_i.set_ylabel(config['ylabel_input'], fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+        ax_i.set_xlabel(f"{config['l_name']} [{config['mtt_unit']}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+        n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
+        ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, loc='right')
+        indiv_figs.append((plate_names[i], fig_i))
+
+    fig_comb, ax = plt.subplots(figsize=(7, 5))
+    fig_comb.patch.set_facecolor('white'); ax.set_facecolor('white')
+    
+    mtt_max_y_comb = 125.0
+    colors = sns.color_palette("Set1", max(num_p, 2)) if num_p > 1 else ['black']
+    for i in range(num_p):
+        means = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+        errs = [calc_error(plates_data[i][valid_rows, c], config['error_bar_type']) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+        ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
+        ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
+        for m, e in zip(means, errs):
+            if not np.isnan(m) and not np.isnan(e): mtt_max_y_comb = max(mtt_max_y_comb, (m + e) * 1.15)
+
+    plotted_stars, mtt_test_name = set(), ""
+    dropped_warnings, non_param_warnings = set(), set()
+    
+    for idx_c, c in enumerate(s_cols_plot):
+        col_data_valid = []
+        for p_idx in range(num_p):
+            if exclude_flags[p_idx]: continue
+            d = plates_data[p_idx][valid_rows, c]
+            d_clean = d[~np.isnan(d)]
+            if len(d_clean) >= 2: col_data_valid.append(d_clean)
+            else: dropped_warnings.add(f"{plate_names[p_idx]} ({conc_vals_plot[idx_c]} {config['mtt_unit']})")
+        
+        if config['is_non_param'] and any(len(d) <= 3 for d in col_data_valid): non_param_warnings.add("MTTデータ")
+        
+        min_p = np.nan
+        if config.get('show_stats', True) and len(col_data_valid) >= 2:
+            p_anova, pairs, t_name = run_statistical_test(col_data_valid, config['var_equal'], config['is_vs_control'], config['is_non_param'], config['is_paired'])
+            if t_name: mtt_test_name = t_name
+            min_p = min([p_val for _, _, p_val in pairs]) if pairs else np.nan
+
+        if not np.isnan(min_p) and min_p < 0.05:
+            stars = "***" if min_p < 0.001 else "**" if min_p < 0.01 else "*"
+            plotted_stars.add(stars)
+            max_mean_err_c = max([np.nanmean(d) + calc_error(d, config['error_bar_type']) for d in col_data_valid if not np.isnan(np.nanmean(d)) and not np.isnan(calc_error(d, config['error_bar_type']))] + [0])
+            text_y = max_mean_err_c + (mtt_max_y_comb * 0.05)
+            mtt_max_y_comb = max(mtt_max_y_comb, text_y * 1.15)
+            ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
+
+    if dropped_warnings: st.warning(f"⚠️ データ不足により除外: {', '.join(dropped_warnings)}")
+    if non_param_warnings: st.info("💡 n≤3の場合、ノンパラメトリック検定で有意差が出ない可能性があります。")
+
+    ax.set_xscale('log'); ax.set_ylim(bottom=0, top=mtt_max_y_comb)
+    
+    if config.get('y_tick_interval', 0) > 0:
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
+    else:
+        ax.yaxis.set_major_locator(ticker.AutoLocator())
+        
+    for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
+    ax.minorticks_off()
+    
+    if config['mtt_custom_xticks'].strip() and len(conc_vals_plot) > 0:
+        try:
+            c_ticks = [float(x.strip()) for x in config['mtt_custom_xticks'].split(',') if x.strip()]
+            all_x = conc_vals_plot + c_ticks
+            min_x, max_x = min(all_x), max(all_x)
+            low_exp, high_exp = int(np.floor(np.log10(min_x))), int(np.ceil(np.log10(max_x)))
+            combined_ticks = sorted(list(set([10**e for e in range(low_exp, high_exp + 1)] + c_ticks)))
+            ax.set_xticks(combined_ticks)
+            ax.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
+            ax.set_xlim(min_x * 0.8, max_x * 1.2)
+        except Exception: pass
+    else: ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
+        
+    ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
+    ax.set_ylabel(config['ylabel_input'], fontsize=14, fontweight='bold', labelpad=8)
+    ax.set_xlabel(f"{config['l_name']} [{config['mtt_unit']}]", fontsize=14, fontweight='bold', labelpad=8)
+    
+    if num_p > 1: ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': 13})
+    
+    max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
+    star_str = ", " + ", ".join([f"{s} p < {0.05 if s=='*' else 0.01 if s=='**' else 0.001}" for s in ["*", "**", "***"] if s in plotted_stars]) if plotted_stars else ""
+    
+    if config.get('show_stats', True): ax.set_title(f"{mtt_test_name}{star_str}, n={max_n}" if mtt_test_name and num_p > 1 else f"n={max_n}", fontsize=14, pad=15, loc='right')
+    else: ax.set_title(f"n={max_n}", fontsize=14, pad=15, loc='right')
+
+    st.pyplot(fig_comb)
+    
+    # --- Excel 書き出し ---
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        mtt_summary_dict = {"濃度 (Concentration)": [0.0] + [float(x) for x in conc_vals_plot]}
+        err_label = "SEM(%)" if "SEM" in config['error_bar_type'] else "SD(%)"
+        for i, p_name in enumerate(plate_names):
+            mtt_summary_dict[f"{p_name}_Mean(%)"] = [100.0] + [float(np.nanmean(plates_data[i][valid_rows, c])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+            mtt_summary_dict[f"{p_name}_{err_label}"] = [float(ctrl_err_pct_list[i])] + [float(calc_error(plates_data[i][valid_rows, c], config['error_bar_type'])) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
+        pd.DataFrame(mtt_summary_dict).to_excel(writer, sheet_name='Summary', index=False)
+        
+        ws = writer.book['Summary']
+        ws.cell(row=2, column=len(mtt_summary_dict) + 2, value="💡 【エラーバー付き折れ線グラフの最短作成手順】")
+        ws.cell(row=3, column=len(mtt_summary_dict) + 2, value="1. 『濃度』の列と、グラフにしたい『〇〇_Mean(%)』の列を同時選択し、[挿入] ＞ [散布図 (直線とマーカー)] を作成。")
+        ws.cell(row=4, column=len(mtt_summary_dict) + 2, value="2. 作成されたグラフの横軸をクリックして[軸の書式設定]を開き、『対数目盛を表示する』にチェック。")
+        ws.cell(row=5, column=len(mtt_summary_dict) + 2, value="3. グラフのプロット線をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
+        ws.cell(row=6, column=len(mtt_summary_dict) + 2, value="4. 『カスタム』にチェックを入れ、『値の指定』をクリック。")
+        ws.cell(row=7, column=len(mtt_summary_dict) + 2, value=f"5. 正負両方の選択ボックスに、対応する『〇〇_{err_label}』の数値をドラッグして指定すれば完成！")
+
+        long_mtt_list = []
+        for i, p_name in enumerate(plate_names):
+            ctrl_vals = [plates_data[i][r, c] for r in valid_rows for c in c_cols if c not in i_cols]
+            for val in ctrl_vals:
+                if not np.isnan(val): long_mtt_list.append({"条件名": f"{p_name}_0_{config['mtt_unit']}", "正規化生存率 (%)": float(val)})
+            for idx_c, c in enumerate(s_cols_plot):
+                for val in plates_data[i][valid_rows, c]:
+                    if not np.isnan(val): long_mtt_list.append({"条件名": f"{p_name}_{conc_vals_plot[idx_c]}_{config['mtt_unit']}", "正規化生存率 (%)": float(val)})
+        pd.DataFrame(long_mtt_list).to_excel(writer, sheet_name='Normalized_Data', index=False)
+        
+        for i in range(num_p):
+            df_norm = pd.DataFrame(plates_data[i])
+            df_norm.index = ['A','B','C','D','E','F','G','H']
+            df_norm.columns = [str(x+1) for x in range(12)]
+            df_norm.to_excel(writer, sheet_name=re.sub(r'[\\/*?:\[\]]', '', f"Plate_{i+1}_{plate_names[i]}")[:31])
+
+    st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+    dl_col1, dl_col2 = st.columns(2)
+    buf_c = io.BytesIO()
+    fig_comb.savefig(buf_c, format='svg', bbox_inches='tight')
+    fixed_svg_c = fix_svg_font(buf_c)
+    
+    with dl_col1: st.download_button("📥 統合グラフ(SVG)を保存", fixed_svg_c, "Combined_Graph.svg", "image/svg+xml", use_container_width=True)
+        
+    with st.expander("個別プレートのグラフ(SVG)をダウンロード"):
+        for p_name, f in indiv_figs:
+            buf_i = io.BytesIO()
+            f.savefig(buf_i, format='svg', bbox_inches='tight')
+            fixed_svg_i = fix_svg_font(buf_i)
+            st.download_button(f"📥 {p_name} のグラフ", fixed_svg_i, f"{p_name}_Graph.svg", "image/svg+xml")
