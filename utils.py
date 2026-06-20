@@ -229,7 +229,7 @@ def parse_idx(text, is_alpha=False):
     return list(set(res))
 
 # ==========================================
-# ★ 画像解析エンジン (内訳リストを返す最新版)
+# ★ 画像解析エンジン (AI爆速化・内訳出力対応)
 # ==========================================
 def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200):
     all_intensities = []
@@ -308,31 +308,87 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
     return all_intensities, " / ".join(summary_details)
 
 # ==========================================
-# プレビュー用画像生成関数
+# ★ プレビュー画像生成（自動判別・完全復元版）
 # ==========================================
-def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200):
+def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200, preview_color="自動 (メタデータから判別)"):
+    # デフォルトは白黒（そのままの色）
+    r_usr, g_usr, b_usr = 1.0, 1.0, 1.0 
+    is_auto = "自動" in preview_color
+    
+    if not is_auto:
+        color_map = {
+            "緑 (Green)": (0.0, 1.0, 0.0),
+            "赤 (Red)": (1.0, 0.0, 0.0),
+            "青 (Blue)": (0.0, 0.0, 1.0),
+            "シアン (Cyan)": (0.0, 1.0, 1.0),
+            "マゼンタ (Magenta)": (1.0, 0.0, 1.0),
+            "白黒 (Gray)": (1.0, 1.0, 1.0)
+        }
+        r_usr, g_usr, b_usr = color_map.get(preview_color, (1.0, 1.0, 1.0))
+
     if filename.endswith('.czi'):
         try:
             import czifile
+            import re
+            
             with czifile.CziFile(io.BytesIO(file_bytes)) as czi:
                 img_array = czi.asarray()
+                meta_xml = czi.metadata()
+                
             img_array = np.squeeze(img_array)
             if img_array.ndim > 2:
                 img_array = img_array[0]
             img_array = img_array.astype(np.float32)
             img_gray = img_array
             
+            if is_auto:
+                # ★ CZIの自動判別ロジック（復元）
+                r_mult, g_mult, b_mult = 1.0, 1.0, 1.0 # fallback
+                if isinstance(meta_xml, str):
+                    match = re.search(r'<Color>([^<]+)</Color>', meta_xml, re.IGNORECASE)
+                    if match:
+                        val = match.group(1).strip()
+                        if val.startswith('#'):
+                            h_val = val.lstrip('#')
+                            if len(h_val) == 8:
+                                r_mult, g_mult, b_mult = int(h_val[2:4], 16)/255.0, int(h_val[4:6], 16)/255.0, int(h_val[6:8], 16)/255.0
+                            elif len(h_val) == 6:
+                                r_mult, g_mult, b_mult = int(h_val[0:2], 16)/255.0, int(h_val[2:4], 16)/255.0, int(h_val[4:6], 16)/255.0
+                        else:
+                            try:
+                                argb_int = int(val)
+                                h_val = f"{argb_int & 0xFFFFFFFF:08x}"
+                                r_mult, g_mult, b_mult = int(h_val[2:4], 16)/255.0, int(h_val[4:6], 16)/255.0, int(h_val[6:8], 16)/255.0
+                            except: pass
+                    else:
+                        if re.search(r'GFP|Alexa.*488|FITC|Green|Fluo-4', meta_xml, re.IGNORECASE): r_mult, g_mult, b_mult = 0.0, 1.0, 0.0
+                        elif re.search(r'RFP|mCherry|Alexa.*594|Texas.*Red|Red|Cy3', meta_xml, re.IGNORECASE): r_mult, g_mult, b_mult = 1.0, 0.0, 0.0
+                        elif re.search(r'DAPI|Hoechst|Blue|Alexa.*405', meta_xml, re.IGNORECASE): r_mult, g_mult, b_mult = 0.0, 0.0, 1.0
+            else:
+                # マニュアル指定
+                r_mult, g_mult, b_mult = r_usr, g_usr, b_usr
+            
             img_min, img_max = img_array.min(), img_array.max()
             img_norm = (img_array - img_min) / (img_max - img_min + 1e-10)
-            zeros = np.zeros_like(img_norm)
-            img_rgb_bg = np.stack((zeros, img_norm, zeros), axis=-1)
+            img_rgb_bg = np.stack((img_norm * r_mult, img_norm * g_mult, img_norm * b_mult), axis=-1)
+            
         except Exception as e:
             raise RuntimeError(f"CZI読み込みエラー: {e}")
     else:
         try:
             img = Image.open(io.BytesIO(file_bytes))
             img_gray = np.array(img.convert("L"), dtype=np.float32)
-            img_rgb_bg = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
+            
+            if img.mode in ['RGB', 'RGBA'] and is_auto:
+                # 元がカラー画像で自動指定ならそのまま使う
+                img_rgb_bg = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
+            else:
+                img_min, img_max = img_gray.min(), img_gray.max()
+                img_norm = (img_gray - img_min) / (img_max - img_min + 1e-10)
+                
+                # 自動指定なら白黒のまま、手動指定ならその色に塗る
+                r_mult, g_mult, b_mult = (1.0, 1.0, 1.0) if is_auto else (r_usr, g_usr, b_usr)
+                img_rgb_bg = np.stack((img_norm * r_mult, img_norm * g_mult, img_norm * b_mult), axis=-1)
         except Exception as e:
             raise RuntimeError(f"画像読み込みエラー: {e}")
             
@@ -356,6 +412,7 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
         valid_labels = np.array([p.label for p in props if p.area >= min_area])
         final_labels = np.where(np.isin(labels, valid_labels), labels, 0)
         
+        # 輪郭線は黄色(1, 1, 0)で描画
         overlay = segmentation.mark_boundaries(img_rgb_bg, final_labels, color=(1, 1, 0), mode='thick')
         return overlay, len(valid_labels)
         
@@ -382,5 +439,6 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
         valid_labels = np.array([p.label for p in props if p.area >= 100])
         
         final_labels = np.where(np.isin(masks, valid_labels), masks, 0)
+        # AIモードの輪郭線は水色(0, 1, 1)で描画
         overlay = segmentation.mark_boundaries(img_rgb_bg, final_labels, color=(0, 1, 1), mode='thick')
         return overlay, len(valid_labels)
