@@ -9,6 +9,9 @@ import itertools
 import io
 import re
 import warnings
+import unicodedata
+import json
+import base64
 
 warnings.filterwarnings('ignore')
 
@@ -27,13 +30,64 @@ def fix_svg_font(svg_bytes):
     svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial', svg_str)
     return svg_str.encode('utf-8')
 
-def calc_rotation(labels, xs):
-    if len(xs) < 2: return 0
-    unique_xs = sorted(list(set(xs)))
-    if len(unique_xs) < 2: return 0
-    min_dx = min(unique_xs[i+1] - unique_xs[i] for i in range(len(unique_xs)-1))
-    max_len = max([len(str(l)) for l in labels if l]) if labels else 0
-    if (max_len * 0.04) > min_dx: return 45
+def embed_state_in_svg(svg_bytes):
+    try:
+        svg_str = svg_bytes.decode('utf-8')
+        safe_state = {}
+        for k, v in st.session_state.items():
+            if k == "svg_uploader": continue
+            try:
+                json.dumps(v)
+                safe_state[k] = v
+            except:
+                pass
+        json_str = json.dumps(safe_state)
+        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
+        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
+        return svg_str.encode('utf-8')
+    except:
+        return svg_bytes
+
+# ★ 修正：隣り合う文字の実際の長さを個別に測り、1文字分の隙間を判定する完璧なロジック
+def calc_rotation(labels, xs, font_size, fig_width, x_span):
+    if len(xs) < 2 or not labels or len(xs) != len(labels): return 0
+    
+    # X座標とラベルをペアにして左から順に並べる
+    pairs = sorted(zip(xs, labels), key=lambda item: item[0])
+    
+    def get_text_width(text):
+        w = 0
+        for c in str(text):
+            # 半角英数は細いので0.55としてリアルな幅を計算
+            w += 1.0 if unicodedata.east_asian_width(c) in 'FWA' else 0.55
+        return w
+        
+    char_width_inch = font_size / 72.0
+    axes_width_inch = fig_width * 0.8
+    
+    # 全ての隣り合うペアを順番にチェック
+    for i in range(len(pairs) - 1):
+        x1, lbl1 = pairs[i]
+        x2, lbl2 = pairs[i+1]
+        
+        if x2 - x1 <= 1e-5: continue # 同じ場所ならスキップ
+        
+        # 2点間の物理的な距離（インチ）
+        dx_inch = ((x2 - x1) / x_span) * axes_width_inch
+        
+        # 2つの文字が中心からお互いに向かって伸びてくる長さ（インチ）
+        w1_inch = get_text_width(lbl1) * char_width_inch
+        w2_inch = get_text_width(lbl2) * char_width_inch
+        occupied_inch = (w1_inch / 2.0) + (w2_inch / 2.0)
+        
+        # 実際の隙間
+        space_inch = dx_inch - occupied_inch
+        
+        # 隙間が1文字分未満なら斜め書きに判定して終了
+        if space_inch < (char_width_inch * 1.0):
+            return 45
+            
     return 0
 
 def render_single_target(input_data, config):
@@ -116,25 +170,42 @@ def render_single_target(input_data, config):
     else:
         palette = {u: "black" for u in unique_up}
     
-    fig, ax = plt.subplots(figsize=(max(4.0, len(internal_ids)*1.2), 5.0))
-    fig.patch.set_facecolor('white'); ax.set_facecolor('white')
-    
     x_coords, bar_width = {}, config['bar_width']
     bar_gap = config.get('bar_gap', 0.02)
+    group_gap = config.get('group_gap', 0.50)
     
     if config['layout_mode'] == "条件ごとにグループ化":
         current_x = 0
         for low in unique_low:
             members = [i for i, l in enumerate(lower_labels) if l == low]
-            for i in members:
+            for idx_m, i in enumerate(members):
                 x_coords[internal_ids[i]] = current_x
-                current_x += bar_width + bar_gap
-            current_x += 0.5
+                if idx_m < len(members) - 1:
+                    current_x += bar_width + bar_gap
+                else:
+                    current_x += bar_width + group_gap
     else:
         current_x = 0
         for i, uid in enumerate(internal_ids): 
             x_coords[uid] = current_x
             current_x += bar_width + bar_gap
+
+    x_vals = list(x_coords.values())
+    if x_vals:
+        max_gap = bar_gap if bar_gap > 0.6 else 0.6
+        x_min_val = min(x_vals) - max_gap
+        x_max_val = max(x_vals) + max_gap
+        x_span = x_max_val - x_min_val
+    else:
+        x_span = 1.0
+
+    fw = config.get('fig_width', 0.0)
+    if fw <= 0:
+        fw = max(4.0, len(internal_ids) * 0.8 + x_span * 1.0)
+        
+    fig_h = config.get('fig_height', 5.0)
+    fig, ax = plt.subplots(figsize=(fw, fig_h))
+    fig.patch.set_facecolor('white'); ax.set_facecolor('white')
 
     if config['is_microscope']:
         box_data_safe = [[v for v in final_norm[uid] if not np.isnan(v)] or [np.nan] for uid in internal_ids]
@@ -150,61 +221,73 @@ def render_single_target(input_data, config):
                    width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_name)
 
     for spine in ax.spines.values(): spine.set_visible(True); spine.set_color('black'); spine.set_linewidth(1.5)
-    ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=14)
+    
+    base_fs = config.get('tick_fontsize', 14)
+    x_lbl_fs = config.get('x_label_fontsize', 14)
+    x_fs_ratio = (x_lbl_fs / 14.0) * (5.0 / fig_h)
+    
+    ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=base_fs)
     ax.tick_params(axis='x', bottom=False, top=False); ax.set_xticklabels([]) 
     trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
     
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
         xs_low = []
+        lbls_low = []
         for low in unique_low:
             xs_t = [x_coords[internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
-            if xs_t: xs_low.append(sum(xs_t)/len(xs_t))
-        rot = calc_rotation(unique_low, xs_low)
+            if xs_t: 
+                xs_low.append(sum(xs_t)/len(xs_t))
+                lbls_low.append(low)
+        rot = calc_rotation(lbls_low, xs_low, x_lbl_fs, fw, x_span)
         
-        y_pos = -0.015
+        y_pos = -0.030 * x_fs_ratio
         va_val = 'top'
         if rot > 0:
             max_len = max([len(str(l)) for l in unique_low if l]) if unique_low else 0
-            extra_margin = max_len * 0.013
-            y_pos = -0.015 - extra_margin
+            extra_margin = max_len * 0.013 * x_fs_ratio
+            y_pos = -0.030 * x_fs_ratio - extra_margin
             va_val = 'center'
             
         for low in unique_low:
             xs = [x_coords[internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
-            if xs: ax.text(sum(xs) / len(xs), y_pos, low, ha='center', va=va_val, rotation=rot, transform=trans, fontsize=14, fontweight='bold', color='black')
+            if xs: ax.text(sum(xs) / len(xs), y_pos, low, ha='center', va=va_val, rotation=rot, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black')
     else:
         xs_up = [x_coords[uid] for uid in internal_ids]
-        rot_up = calc_rotation(upper_labels, xs_up)
+        rot_up = calc_rotation(upper_labels, xs_up, x_lbl_fs, fw, x_span)
         
-        y_up = -0.015 
+        y_up = -0.015 * x_fs_ratio
         va_up = 'top'
         extra_margin_up = 0
         if rot_up > 0:
             max_up_len = max([len(str(u)) for u in upper_labels if u]) if upper_labels else 0
-            extra_margin_up = max_up_len * 0.013
-            y_up = -0.015 - extra_margin_up
+            extra_margin_up = max_up_len * 0.013 * x_fs_ratio
+            y_up = -0.015 * x_fs_ratio - extra_margin_up
             va_up = 'center'
             
-        y_line = y_up - extra_margin_up - 0.01
-        if rot_up == 0: y_line = y_up - 0.045
+        if rot_up == 0: 
+            y_line = y_up - 0.075 * x_fs_ratio 
+        else:
+            y_line = y_up - extra_margin_up - 0.015 * x_fs_ratio
         
         for i, uid in enumerate(internal_ids):
-            ax.text(x_coords[uid], y_up, upper_labels[i], ha='center', va=va_up, rotation=rot_up, transform=trans, fontsize=13, color='black', fontweight='bold')
+            ax.text(x_coords[uid], y_up, upper_labels[i], ha='center', va=va_up, rotation=rot_up, transform=trans, fontsize=x_lbl_fs, color='black', fontweight='bold')
             
         xs_low_center = []
+        low_labels_clean = []
         for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
             if not label: continue
             xs = [x_coords[internal_ids[x[0]]] for x in elements]
             xs_low_center.append((min(xs) + max(xs)) / 2)
+            low_labels_clean.append(label)
             
-        rot_low = calc_rotation([l for l in lower_labels if l], xs_low_center)
+        rot_low = calc_rotation(low_labels_clean, xs_low_center, x_lbl_fs, fw, x_span)
         va_low = 'top'
-        y_low = y_line - 0.01
+        y_low = y_line - 0.015 * x_fs_ratio
         
         if rot_low > 0:
             max_low_len = max([len(str(l)) for l in lower_labels if l]) if lower_labels else 0
-            extra_margin_low = max_low_len * 0.013
-            y_low = y_line - 0.01 - extra_margin_low
+            extra_margin_low = max_low_len * 0.013 * x_fs_ratio
+            y_low = y_line - 0.015 * x_fs_ratio - extra_margin_low
             va_low = 'center'
             
         for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
@@ -212,7 +295,7 @@ def render_single_target(input_data, config):
             xs = [x_coords[internal_ids[x[0]]] for x in elements]
             x_start, x_end = min(xs), max(xs)
             if x_start != x_end: ax.plot([x_start - bar_width/2.5, x_end + bar_width/2.5], [y_line, y_line], color='black', lw=1.2, transform=trans, clip_on=False)
-            ax.text((x_start + x_end) / 2, y_low, label, ha='center', va=va_low, rotation=rot_low, transform=trans, fontsize=15, fontweight='bold', color='black')
+            ax.text((x_start + x_end) / 2, y_low, label, ha='center', va=va_low, rotation=rot_low, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black')
 
     all_vals = [v for vals in final_norm.values() for v in vals if not np.isnan(v)]
     current_max_y = max(all_vals + [0]) if all_vals else 1.0
@@ -235,7 +318,7 @@ def render_single_target(input_data, config):
         levels[placed_level].append((x_start, x_end)); max_level = max(max_level, placed_level)
         by = base_bracket_y + placed_level * y_shift; max_element_y = max(max_element_y, by + h)
         ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
-        ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=14, fontweight='bold')
+        ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=base_fs, fontweight='bold')
 
     ax.set_ylim(0, max(current_max_y * 1.2, max_element_y * 1.15))
     
@@ -244,17 +327,15 @@ def render_single_target(input_data, config):
     else:
         ax.yaxis.set_major_locator(ticker.AutoLocator())
         
-    x_vals = list(x_coords.values())
     if x_vals: 
-        max_gap = bar_gap if bar_gap > 0.6 else 0.6
-        ax.set_xlim(min(x_vals) - max_gap, max(x_vals) + max_gap)
+        ax.set_xlim(x_min_val, x_max_val)
         
-    ax.set_ylabel(config['ylabel_input'], fontsize=16, fontweight="bold", color='black', labelpad=10)
+    ax.set_ylabel(config['ylabel_input'], fontsize=config.get('label_fontsize', 16), fontweight="bold", color='black', labelpad=10)
     
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': 12, 'weight': 'bold'})
+        if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold'})
 
     n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
     expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
@@ -262,11 +343,10 @@ def render_single_target(input_data, config):
     title_str = f"{test_desc_flat}{star_str}" if config['is_microscope'] else f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
     
     if not config.get('show_stats', True): title_str = f"n={expected_n}"
-    if title_str: ax.set_title(title_str, fontsize=14, pad=15, loc='right')
+    if title_str: ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right')
 
     st.pyplot(fig)
     
-    # --- Excel 書き出し ---
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         err_label = "SEM" if "SEM" in config['error_bar_type'] else "SD"
@@ -283,47 +363,11 @@ def render_single_target(input_data, config):
             stat_data.append({"比較": f"{c1} vs {c2}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"})
         if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
 
-        try:
-            if config['is_microscope']:
-                ws = writer.book['Normalized_Data']
-                ws.cell(row=2, column=4, value="💡 【箱ひげ図の最短作成手順】")
-                ws.cell(row=3, column=4, value="1. 左のA列とB列をすべて全選択します。")
-                ws.cell(row=4, column=4, value="2. [挿入]タブ ＞ [統計グラフ] ＞ [箱ひげ図] をクリックします。")
-            else:
-                ws_sum = writer.book['Summary']
-                sc = len(summary_df.columns) + 2
-                ws_sum.cell(row=2, column=sc, value="💡 【エラーバー付き棒グラフの最短作成手順】")
-                ws_sum.cell(row=3, column=sc, value="1. 左の『上段ラベル』と『平均』の列を選択し、[挿入] ＞ [縦棒グラフ] を作成。")
-                ws_sum.cell(row=4, column=sc, value="2. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
-                ws_sum.cell(row=5, column=sc, value="3. 『カスタム』にチェックを入れ、『値の指定』。")
-                ws_sum.cell(row=6, column=sc, value=f"4. 正負両方に、左の『{err_label}』の数値をドラッグして指定すれば完成！")
-
-                if config['layout_mode'] == "条件ごとにグループ化":
-                    matrix_mean = pd.DataFrame(index=unique_up, columns=unique_low)
-                    matrix_sd = pd.DataFrame(index=unique_up, columns=unique_low)
-                    for i, uid in enumerate(internal_ids):
-                        matrix_mean.at[upper_labels[i], lower_labels[i]] = np.nanmean(final_norm[uid])
-                        matrix_sd.at[upper_labels[i], lower_labels[i]] = calc_error(final_norm[uid], config['error_bar_type'])
-                    
-                    matrix_mean.to_excel(writer, sheet_name='Summary_Matrix', startrow=1, startcol=0)
-                    matrix_sd.to_excel(writer, sheet_name='Summary_Matrix', startrow=len(unique_up)+4, startcol=0)
-                    
-                    ws_mat = writer.book['Summary_Matrix']
-                    ws_mat.cell(row=1, column=1, value="【平均値 (Mean)】")
-                    ws_mat.cell(row=len(unique_up)+4, column=1, value=f"【{err_label}】")
-                    
-                    sc_mat = len(unique_low) + 3
-                    ws_mat.cell(row=2, column=sc_mat, value="💡 【グループ化棒グラフの最短作成手順】")
-                    ws_mat.cell(row=3, column=sc_mat, value="1. 左上の【平均値】の表(A2から)を丸ごと選択し、[挿入] ＞ [2D 縦棒 (集合縦棒)] をクリック。")
-                    ws_mat.cell(row=4, column=sc_mat, value="2. 追加された棒をクリックし、[誤差範囲] ＞ [その他の誤差範囲オプション] ＞ [カスタム]")
-                    ws_mat.cell(row=5, column=sc_mat, value=f"3. 値の指定で、下の【{err_label}】の表の該当する行をドラッグして指定すれば完成です！")
-        except Exception:
-            pass
-
     col_dl1, col_dl2 = st.columns(2)
     buf_svg = io.BytesIO()
     fig.savefig(buf_svg, format='svg', bbox_inches='tight')
     fixed_svg = fix_svg_font(buf_svg)
+    final_svg = embed_state_in_svg(fixed_svg)
     
     with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
-    with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", fixed_svg, "Graph.svg", "image/svg+xml", use_container_width=True)
+    with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", final_svg, "Graph.svg", "image/svg+xml", use_container_width=True)
