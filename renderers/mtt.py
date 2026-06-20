@@ -26,6 +26,29 @@ def fix_svg_font(svg_bytes):
     svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial', svg_str)
     return svg_str.encode('utf-8')
 
+# --- ★ SVGの裏側に全設定とデータを埋め込む魔法の関数 ---
+def embed_state_in_svg(svg_bytes):
+    try:
+        import json
+        import base64
+        import streamlit as st
+        svg_str = svg_bytes.decode('utf-8')
+        safe_state = {}
+        for k, v in st.session_state.items():
+            if k == "svg_uploader": continue
+            try:
+                json.dumps(v)
+                safe_state[k] = v
+            except:
+                pass
+        json_str = json.dumps(safe_state)
+        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
+        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
+        return svg_str.encode('utf-8')
+    except:
+        return svg_bytes
+
 def render_mtt_analysis(input_data, config):
     if config.get('svg_font_path', True):
         plt.rcParams['svg.fonttype'] = 'path'
@@ -65,19 +88,30 @@ def render_mtt_analysis(input_data, config):
     num_p = len(plates_data)
     indiv_figs = []
     
+    # ★ カスタム横幅とマーカーの設定
+    fw_i = config.get('fig_width', 0.0)
+    fw_i = 6.0 if fw_i <= 0 else fw_i
+    
+    # ★ カスタム色の反映
+    raw_colors = config.get('mtt_colors', [])
+    raw_markers = config.get('mtt_markers', [])
+    colors = [raw_colors[i % len(raw_colors)] if len(raw_colors) > 0 else 'black' for i in range(num_p)]
+    markers = [raw_markers[i % len(raw_markers)] if len(raw_markers) > 0 else 'o' for i in range(num_p)]
+    
     for i in range(num_p):
-        fig_i, ax_i = plt.subplots(figsize=(6, 4))
+        fig_i, ax_i = plt.subplots(figsize=(fw_i, config.get('fig_height', 4.0)))
         fig_i.patch.set_facecolor('white'); ax_i.set_facecolor('white')
         
         means_i = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
         errs_i = [calc_error(plates_data[i][valid_rows, c], config['error_bar_type']) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
         
-        ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt='-o', color='black', capsize=4, mfc='black', mec='black', lw=1.5)
+        c, m = colors[i], markers[i]
+        ax_i.errorbar(conc_vals_plot, means_i, yerr=errs_i, fmt=f'-{m}', color=c, capsize=4, mfc=c, mec=c, lw=1.5)
         ax_i.set_xscale('log')
         
         mtt_max_y_i = 125.0
-        for m, e in zip(means_i, errs_i):
-            if not np.isnan(m) and not np.isnan(e): mtt_max_y_i = max(mtt_max_y_i, (m + e) * 1.15)
+        for m_val, e in zip(means_i, errs_i):
+            if not np.isnan(m_val) and not np.isnan(e): mtt_max_y_i = max(mtt_max_y_i, (m_val + e) * 1.15)
         ax_i.set_ylim(bottom=0, top=mtt_max_y_i)
         
         if config.get('y_tick_interval', 0) > 0:
@@ -101,25 +135,30 @@ def render_mtt_analysis(input_data, config):
             except Exception: pass
         else: ax_i.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
             
-        ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
-        ax_i.set_ylabel(config['ylabel_input'], fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
-        ax_i.set_xlabel(f"{config['l_name']} [{config['mtt_unit']}]", fontsize=14, fontweight='bold', fontname='Arial', labelpad=8)
+        ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=config.get('tick_fontsize', 12), colors='black', which='major')
+        ax_i.set_ylabel(config['ylabel_input'], fontsize=config.get('label_fontsize', 14), fontweight='bold', fontname='Arial', labelpad=8)
+        ax_i.set_xlabel(f"{config['l_name']} [{config['mtt_unit']}]", fontsize=config.get('label_fontsize', 14), fontweight='bold', fontname='Arial', labelpad=8)
         n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
-        ax_i.set_title(f"n={n_indiv}", fontsize=14, pad=15, loc='right')
+        ax_i.set_title(f"n={n_indiv}", fontsize=config.get('title_fontsize', 14), pad=15, loc='right')
         indiv_figs.append((plate_names[i], fig_i))
 
-    fig_comb, ax = plt.subplots(figsize=(7, 5))
+    fw_c = config.get('fig_width', 0.0)
+    fw_c = 7.0 if fw_c <= 0 else fw_c
+    
+    fig_comb, ax = plt.subplots(figsize=(fw_c, config.get('fig_height', 5.0)))
     fig_comb.patch.set_facecolor('white'); ax.set_facecolor('white')
     
     mtt_max_y_comb = 125.0
-    colors = sns.color_palette("Set1", max(num_p, 2)) if num_p > 1 else ['black']
+    
     for i in range(num_p):
         means = [np.nanmean(plates_data[i][valid_rows, c]) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
         errs = [calc_error(plates_data[i][valid_rows, c], config['error_bar_type']) if not np.isnan(plates_data[i][valid_rows, c]).all() else np.nan for c in s_cols_plot]
-        ax.plot(conc_vals_plot, means, '-o', color=colors[i], mfc=colors[i], mec=colors[i], lw=1.8, label=plate_names[i])
-        ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=colors[i], capsize=4, lw=1.8)
-        for m, e in zip(means, errs):
-            if not np.isnan(m) and not np.isnan(e): mtt_max_y_comb = max(mtt_max_y_comb, (m + e) * 1.15)
+        c, m = colors[i], markers[i]
+        
+        ax.plot(conc_vals_plot, means, f'-{m}', color=c, mfc=c, mec=c, lw=1.8, label=plate_names[i])
+        ax.errorbar(conc_vals_plot, means, yerr=errs, fmt='none', color=c, capsize=4, lw=1.8)
+        for m_val, e in zip(means, errs):
+            if not np.isnan(m_val) and not np.isnan(e): mtt_max_y_comb = max(mtt_max_y_comb, (m_val + e) * 1.15)
 
     plotted_stars, mtt_test_name = set(), ""
     dropped_warnings, non_param_warnings = set(), set()
@@ -147,7 +186,7 @@ def render_mtt_analysis(input_data, config):
             max_mean_err_c = max([np.nanmean(d) + calc_error(d, config['error_bar_type']) for d in col_data_valid if not np.isnan(np.nanmean(d)) and not np.isnan(calc_error(d, config['error_bar_type']))] + [0])
             text_y = max_mean_err_c + (mtt_max_y_comb * 0.05)
             mtt_max_y_comb = max(mtt_max_y_comb, text_y * 1.15)
-            ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=14, fontweight='bold', color='black')
+            ax.text(conc_vals_plot[idx_c], text_y, stars, ha='center', va='bottom', fontsize=config.get('tick_fontsize', 14), fontweight='bold', color='black')
 
     if dropped_warnings: st.warning(f"⚠️ データ不足により除外: {', '.join(dropped_warnings)}")
     if non_param_warnings: st.info("💡 n≤3の場合、ノンパラメトリック検定で有意差が出ない可能性があります。")
@@ -175,17 +214,19 @@ def render_mtt_analysis(input_data, config):
         except Exception: pass
     else: ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
         
-    ax.tick_params(direction='in', length=5, width=1.2, labelsize=12, colors='black', which='major')
-    ax.set_ylabel(config['ylabel_input'], fontsize=14, fontweight='bold', labelpad=8)
-    ax.set_xlabel(f"{config['l_name']} [{config['mtt_unit']}]", fontsize=14, fontweight='bold', labelpad=8)
+    ax.tick_params(direction='in', length=5, width=1.2, labelsize=config.get('tick_fontsize', 12), colors='black', which='major')
+    ax.set_ylabel(config['ylabel_input'], fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8)
+    ax.set_xlabel(f"{config['l_name']} [{config['mtt_unit']}]", fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8)
     
-    if num_p > 1: ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': 13})
+    if num_p > 1: ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 13)})
     
     max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
     star_str = ", " + ", ".join([f"{s} p < {0.05 if s=='*' else 0.01 if s=='**' else 0.001}" for s in ["*", "**", "***"] if s in plotted_stars]) if plotted_stars else ""
     
-    if config.get('show_stats', True): ax.set_title(f"{mtt_test_name}{star_str}, n={max_n}" if mtt_test_name and num_p > 1 else f"n={max_n}", fontsize=14, pad=15, loc='right')
-    else: ax.set_title(f"n={max_n}", fontsize=14, pad=15, loc='right')
+    if config.get('show_stats', True): title_str = f"{mtt_test_name}{star_str}, n={max_n}" if mtt_test_name and num_p > 1 else f"n={max_n}"
+    else: title_str = f"n={max_n}"
+    
+    ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right')
 
     st.pyplot(fig_comb)
     
@@ -224,16 +265,21 @@ def render_mtt_analysis(input_data, config):
             df_norm.to_excel(writer, sheet_name=re.sub(r'[\\/*?:\[\]]', '', f"Plate_{i+1}_{plate_names[i]}")[:31])
 
     st.download_button("📥 Excelデータをダウンロード (全データ・統計詳細シート同梱)", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
+    
     dl_col1, dl_col2 = st.columns(2)
     buf_c = io.BytesIO()
     fig_comb.savefig(buf_c, format='svg', bbox_inches='tight')
     fixed_svg_c = fix_svg_font(buf_c)
+    # ★ ここで統合グラフSVGの裏側にデータを埋め込む！
+    final_svg_c = embed_state_in_svg(fixed_svg_c)
     
-    with dl_col1: st.download_button("📥 統合グラフ(SVG)を保存", fixed_svg_c, "Combined_Graph.svg", "image/svg+xml", use_container_width=True)
+    with dl_col1: st.download_button("📥 統合グラフ(SVG)を保存", final_svg_c, "Combined_Graph.svg", "image/svg+xml", use_container_width=True)
         
     with st.expander("個別プレートのグラフ(SVG)をダウンロード"):
         for p_name, f in indiv_figs:
             buf_i = io.BytesIO()
             f.savefig(buf_i, format='svg', bbox_inches='tight')
             fixed_svg_i = fix_svg_font(buf_i)
-            st.download_button(f"📥 {p_name} のグラフ", fixed_svg_i, f"{p_name}_Graph.svg", "image/svg+xml")
+            # ★ 個別のSVGにも復元データを埋め込む
+            final_svg_i = embed_state_in_svg(fixed_svg_i)
+            st.download_button(f"📥 {p_name} のグラフ", final_svg_i, f"{p_name}_Graph.svg", "image/svg+xml")
