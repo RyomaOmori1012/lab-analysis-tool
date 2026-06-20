@@ -51,18 +51,18 @@ def render_data_input(config, num_cond):
 
     if is_mtt:
         c1, c2, c3 = st.columns(3)
-        config['mtt_ignore_row'] = c1.text_input('空のWell(除外行):', 'A, H')
-        config['mtt_ignore_col'] = c2.text_input('空のWell(除外列):', '1')
-        config['mtt_blank_col'] = c3.text_input('バックグラウンド（培地のみ）(列):', '12')
+        config['mtt_ignore_row'] = c1.text_input('空のWell(除外行):', 'A, H', key='mtt_ignore_row')
+        config['mtt_ignore_col'] = c2.text_input('空のWell(除外列):', '1', key='mtt_ignore_col')
+        config['mtt_blank_col'] = c3.text_input('バックグラウンド（培地のみ）(列):', '12', key='mtt_blank_col')
         c4, c5 = st.columns(2)
-        config['mtt_control_col'] = c4.text_input('Control（細胞生存率100%の基準）(列):', '11')
-        config['mtt_sample_cols'] = c5.text_input('Sample(列):', '2-10')
+        config['mtt_control_col'] = c4.text_input('Control（細胞生存率100%の基準）(列):', '11', key='mtt_control_col')
+        config['mtt_sample_cols'] = c5.text_input('Sample(列):', '2-10', key='mtt_sample_cols')
         c6, c7, c8 = st.columns(3)
-        config['mtt_start_conc'] = c6.number_input('開始濃度:', value=4000.0)
-        config['mtt_dilution'] = c7.number_input('希釈倍率(n倍):', value=2.0)
-        config['mtt_unit'] = c8.text_input('単位:', 'μM')
-        config['mtt_conc_direction'] = st.radio("濃度の配置方向:", ["左が高濃度 (右へ希釈)", "右が高濃度 (左へ希釈)"], horizontal=True)
-        config['mtt_custom_xticks'] = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250')
+        config['mtt_start_conc'] = c6.number_input('開始濃度:', value=4000.0, key='mtt_start_conc')
+        config['mtt_dilution'] = c7.number_input('希釈倍率(n倍):', value=2.0, key='mtt_dilution')
+        config['mtt_unit'] = c8.text_input('単位:', 'μM', key='mtt_unit')
+        config['mtt_conc_direction'] = st.radio("濃度の配置方向:", ["左が高濃度 (右へ希釈)", "右が高濃度 (左へ希釈)"], horizontal=True, key='mtt_conc_direction')
+        config['mtt_custom_xticks'] = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250', key='mtt_custom_xticks')
         
         for i in range(num_cond):
             with st.container(border=True):
@@ -74,7 +74,7 @@ def render_data_input(config, num_cond):
                 p_data = st.text_area(f'データ (8行x12列):', key=f"pdata_{i}", placeholder="エクセルから8行×12列の数値データをそのままコピーしてペーストしてください\n\n(例)\n0.123\t0.125\t0.130\t...\n0.110\t0.115\t0.120\t...\n...")
                 input_data.append((p_name, p_data, exclude_flag))
     else:
-        input_mode = "手動で1条件ずつ入力" if is_microscope else st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True)
+        input_mode = "手動で1条件ずつ入力" if is_microscope else st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True, key='input_mode_radio')
         
         if "prev_input_mode" not in st.session_state:
             st.session_state["prev_input_mode"] = input_mode
@@ -99,7 +99,7 @@ def render_data_input(config, num_cond):
 
         if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）":
             c_n_input, c_info = st.columns([1, 2.5])
-            n_per_group = c_n_input.number_input("📊 1群あたりのデータ数 (n数):", min_value=1, max_value=100, value=3, step=1)
+            n_per_group = c_n_input.number_input("📊 1群あたりのデータ数 (n数):", min_value=1, max_value=100, value=3, step=1, key='n_per_group')
             c_info.info("💡 生データをそのままペーストしてください。指定したn数ごとに自動でグループ化されます。")
 
             bulk_t_list, bulk_l_list = [], []
