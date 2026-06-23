@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
+import json
+import outlier_tools
 
 @st.cache_data(show_spinner=False, max_entries=5)
 def get_cached_preview(file_bytes, filename, mode, sigma, sens, dist, area, preview_color):
@@ -11,18 +13,6 @@ def get_cached_preview(file_bytes, filename, mode, sigma, sens, dist, area, prev
     return generate_preview_image(file_bytes, filename, mode, sigma, sens, dist, area, preview_color)
 
 def render_data_input(config, num_cond):
-    st.markdown("---")
-    c_head1, c_head2 = st.columns([1.2, 1])
-    with c_head1:
-        st.header("📝 データ入力")
-    with c_head2:
-        st.write("")
-        if st.button("🗑️ 入力データをすべてクリア", type="primary", use_container_width=True):
-            st.session_state.clear()
-            st.rerun()
-
-    input_data = []
-
     is_mtt = config['is_mtt']
     is_microscope = config['is_microscope']
     label_style = config['label_style']
@@ -42,6 +32,45 @@ def render_data_input(config, num_cond):
     dist_val = config['dist_val']
     area_val = config['area_val']
     preview_color = config['preview_color']
+
+    st.markdown("---")
+    
+    # アップローダーを安全に新品に取り替えるためのID
+    if 'uploader_idx' not in st.session_state:
+        st.session_state['uploader_idx'] = 0
+
+    if is_microscope:
+        c_head1, c_head2, c_head3 = st.columns([1.2, 0.8, 1])
+        with c_head1:
+            st.header("📝 データ入力")
+        with c_head2:
+            st.write("")
+            if st.button("🗑️ 全データをクリア", type="primary", use_container_width=True):
+                st.session_state.clear()
+                st.rerun()
+        with c_head3:
+            st.write("")
+            if st.button("🖼️ 画像のみクリア (軽量化)", use_container_width=True, help="解析後にこれを押すと、抽出した数値は残したまま重い画像ファイルだけを削除して動作をサクサクにします。"):
+                # 画像アップローダーのIDを進める
+                st.session_state['uploader_idx'] += 1
+                st.rerun()
+    else:
+        c_head1, c_head2 = st.columns([1.2, 1])
+        with c_head1:
+            st.header("📝 データ入力")
+        with c_head2:
+            st.write("")
+            if st.button("🗑️ 入力データをすべてクリア", type="primary", use_container_width=True):
+                st.session_state.clear()
+                st.rerun()
+
+    input_data = []
+
+    analyze_all = False
+    processed_any = False
+    if is_microscope:
+        st.info("💡 各Wellに画像をアップロードした後、下のボタンを押すと全ての画像が全自動で連続解析され、数値欄に入力されます。")
+        analyze_all = st.button("🚀🚀 アップロード済みの【全ての画像】を一括で解析する 🚀🚀", type="primary", use_container_width=True)
 
     if not is_mtt:
         if label_style == "1段 ＋ 系列名（凡例）":
@@ -64,17 +93,52 @@ def render_data_input(config, num_cond):
         config['mtt_conc_direction'] = st.radio("濃度の配置方向:", ["左が高濃度 (右へ希釈)", "右が高濃度 (左へ希釈)"], horizontal=True, key='mtt_conc_direction')
         config['mtt_custom_xticks'] = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250', key='mtt_custom_xticks')
         
+        from utils import parse_idx
+        i_rows = parse_idx(config['mtt_ignore_row'], True)
+        i_cols = parse_idx(config['mtt_ignore_col'], False)
+        b_cols = parse_idx(config['mtt_blank_col'], False)
+        c_cols = parse_idx(config['mtt_control_col'], False)
+        m_cols = parse_idx(config['mtt_mock_col'], False)
+        s_cols = parse_idx(config['mtt_sample_cols'], False)
+        valid_rows = [r for r in range(8) if r not in i_rows]
+        
+        if 'mtt_exclude_map' not in config:
+            config['mtt_exclude_map'] = {}
+            
         for i in range(num_cond):
             with st.container(border=True):
                 st.markdown(f"**【 プレート {i+1} 】**")
                 if f"pname_{i}" not in st.session_state: st.session_state[f"pname_{i}"] = ""
                 p_name = st.text_input(f'条件名:', key=f"pname_{i}")
                 exclude_flag = st.checkbox("このプレートを統計検定から除外する", key=f"ex_{i}") if show_stats else False
+
+                mock_lbl_val, cond_lbl_val = "Mock", p_name if p_name else f"Plate {i+1}"
+                if config.get('show_mtt_bar', False):
+                    st.markdown("<span style='font-size:0.8em; color:gray;'>👇 ベースライン毒性棒グラフの横ラベル設定</span>", unsafe_allow_html=True)
+                    c_lbl1, c_lbl2 = st.columns(2)
+                    with c_lbl1:
+                        if f"mtt_bar_mock_lbl_{i}" not in st.session_state: st.session_state[f"mtt_bar_mock_lbl_{i}"] = "Mock"
+                        mock_lbl_val = st.text_input(f"無処理群のラベル:", key=f"mtt_bar_mock_lbl_{i}")
+                    with c_lbl2:
+                        default_cond_lbl = p_name if p_name.strip() else f"Plate {i+1}"
+                        if f"mtt_bar_cond_lbl_{i}" not in st.session_state: 
+                            st.session_state[f"mtt_bar_cond_lbl_{i}"] = default_cond_lbl
+                        elif st.session_state.get(f"prev_pname_{i}") != p_name:
+                            st.session_state[f"mtt_bar_cond_lbl_{i}"] = default_cond_lbl
+                        st.session_state[f"prev_pname_{i}"] = p_name
+                        cond_lbl_val = st.text_input(f"処理群のラベル:", key=f"mtt_bar_cond_lbl_{i}")
+                
                 if f"pdata_{i}" not in st.session_state: st.session_state[f"pdata_{i}"] = ""
-                p_data = st.text_area(f'データ (8行x12列):', key=f"pdata_{i}", placeholder="エクセルから8行×12列の数値データをそのままコピーしてペーストしてください\n\n(例)\n0.123\t0.125\t0.130\t...\n0.110\t0.115\t0.120\t...\n...")
-                input_data.append((p_name, p_data, exclude_flag))
+                p_data = st.text_area(f'データ (8行x12列):', key=f"pdata_{i}", placeholder="エクセルから8行×12列の数値データをそのままコピーしてペーストしてください")
+                
+                config['mtt_exclude_map'][i] = outlier_tools.render_outlier_ui(
+                    p_data, i, config, valid_rows, i_cols, b_cols, c_cols, m_cols, s_cols
+                )
+                
+                input_data.append((p_name, p_data, exclude_flag, mock_lbl_val, cond_lbl_val))
+
     else:
-        input_mode = "手動で1条件ずつ入力" if is_microscope else st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True, key='input_mode_radio')
+        input_mode = "手作業モード" if is_microscope else st.radio("入力モード:", ["エクセル列ごとに一括ペースト（おすすめ✨）", "手動で1条件ずつ入力"], horizontal=True, key='input_mode_radio')
         
         if "prev_input_mode" not in st.session_state:
             st.session_state["prev_input_mode"] = input_mode
@@ -84,9 +148,8 @@ def render_data_input(config, num_cond):
             
             for i in range(20):
                 orig = f"Cond_{i+1}"
-                st.session_state[f"up_{i}"] = st.session_state.data_dict.get(f"u_{orig}", "Control" if i == 0 else orig)
+                st.session_state[f"up_{i}"] = st.session_state.data_dict.get(f"u_{orig}", "")
                 st.session_state[f"dn_{i}"] = st.session_state.data_dict.get(f"d_{orig}", "")
-                
                 st.session_state[f"t_{i}"] = st.session_state.data_dict.get(f"raw_t_{orig}_0", "")
                 st.session_state[f"l_{i}"] = st.session_state.data_dict.get(f"raw_l_{orig}_0", "")
                 for j in range(10): 
@@ -99,7 +162,7 @@ def render_data_input(config, num_cond):
 
         if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）":
             c_n_input, c_info = st.columns([1, 2.5])
-            n_per_group = c_n_input.number_input("📊 1群あたりのデータ数 (n数):", min_value=1, max_value=100, value=3, step=1, key='n_per_group')
+            n_per_group = c_n_input.number_input("📊 1群あたりのデータ数 (n数):", min_value=1, max_value=100, step=1, key='n_per_group')
             c_info.info("💡 生データをそのままペーストしてください。指定したn数ごとに自動でグループ化されます。")
 
             bulk_t_list, bulk_l_list = [], []
@@ -183,7 +246,7 @@ def render_data_input(config, num_cond):
                         mapping_data = []
                         for g in range(num_groups):
                             orig = f"Cond_{g+1}"
-                            u_val = st.session_state.data_dict.get(f"u_{orig}", orig)
+                            u_val = st.session_state.data_dict.get(f"u_{orig}", "") 
                             d_val = st.session_state.data_dict.get(f"d_{orig}", "")
                             ex_val = st.session_state.data_dict.get(f"ex_{orig}", False)
                             mapping_data.append({"orig_name": orig, "u_label": u_val, "d_label": d_val, "exclude": ex_val})
@@ -219,32 +282,17 @@ def render_data_input(config, num_cond):
                     col_up, col_dn = st.columns(2)
 
                     if f"up_{i}" not in st.session_state:
-                        st.session_state[f"up_{i}"] = st.session_state.data_dict.get(f"u_Cond_{i+1}", "Control" if i == 0 else f"Cond_{i+1}")
+                        st.session_state[f"up_{i}"] = st.session_state.data_dict.get(f"u_Cond_{i+1}", "")
                     if f"dn_{i}" not in st.session_state:
                         st.session_state[f"dn_{i}"] = st.session_state.data_dict.get(f"d_Cond_{i+1}", "")
 
                     with col_up:
-                        st.markdown(
-                            f"<span style='font-size:0.9em;font-weight:bold;'>{u_label_name}:</span>",
-                            unsafe_allow_html=True
-                        )
-                        st.text_input(
-                            "u_hid",
-                            key=f"up_{i}",
-                            label_visibility="collapsed"
-                        )
+                        st.markdown(f"<span style='font-size:0.9em;font-weight:bold;'>{u_label_name}:</span>", unsafe_allow_html=True)
+                        st.text_input("u_hid", key=f"up_{i}", placeholder="(空欄可)", label_visibility="collapsed")
 
                     with col_dn:
-                        st.markdown(
-                            f"<span style='font-size:0.9em;font-weight:bold;'>{d_label_name}:</span>",
-                            unsafe_allow_html=True
-                        )
-                        st.text_input(
-                            "d_hid",
-                            key=f"dn_{i}",
-                            placeholder="(空欄可)",
-                            label_visibility="collapsed"
-                        )
+                        st.markdown(f"<span style='font-size:0.9em;font-weight:bold;'>{d_label_name}:</span>", unsafe_allow_html=True)
+                        st.text_input("d_hid", key=f"dn_{i}", placeholder="(空欄可)", label_visibility="collapsed")
                         
                     st.session_state.data_dict[f"u_Cond_{i+1}"] = st.session_state[f"up_{i}"]
                     st.session_state.data_dict[f"d_Cond_{i+1}"] = st.session_state[f"dn_{i}"]
@@ -252,54 +300,106 @@ def render_data_input(config, num_cond):
                     exclude_flag = st.checkbox("この条件を統計検定から除外する", key=f"ex_{i}") if show_stats else False
 
                     if is_microscope:
-                        n_t_list = []
+                        num_wells = st.number_input(f"📊 この条件の Well数 (n数):", min_value=1, max_value=20, value=3, step=1, key=f"n_wells_{i}")
+                        n_t_list = [] 
+                        
                         for j in range(num_targets):
-                            st.markdown(f"**📷 {target_names[j]} 画像解析**")
-                            c_mode, c_upload = st.columns([1, 2])
+                            tgt_display = target_names[j] if target_names[j] else f"Target {j+1}"
+                            st.markdown(f"**📷 {tgt_display} データ入力 / 解析**")
+                            c_mode, _ = st.columns([1, 2])
                             ai_mode = c_mode.radio("モード:", ["標準 (クラウド高速)", "AI (Cellpose・ローカル)"], key=f"mode_{i}_{j}", horizontal=True)
-                            uploaded_imgs = c_upload.file_uploader("画像を追加 (複数可)", type=['tif', 'png', 'jpg', 'czi'], accept_multiple_files=True, key=f"imgs_{i}_{j}")
                             
-                            if uploaded_imgs:
-                                selected_mode = "standard" if "標準" in ai_mode else "ai"
-                                has_results = st.session_state.get(f"t_{i}_{j}", "") != ""
-                                
-                                with st.expander("👁️ 抽出プレビュー (1枚目の画像で確認)", expanded=(selected_mode == "standard" or has_results)):
-                                    if selected_mode == "standard":
-                                        try:
-                                            first_img = uploaded_imgs[0]
-                                            with st.spinner("画像処理中..."):
-                                                overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, sigma_val, sens_val, dist_val, area_val, preview_color)
-                                            overlay_uint8 = (overlay_img * 255).astype(np.uint8)
-                                            st.image(overlay_uint8, caption=f"1枚目 ({first_img.name}) の検出細胞数: {cell_count}個", use_container_width=True)
-                                            
-                                            if has_results: st.success(st.session_state.get(f"msg_{i}_{j}", "✨ 解析完了！"))
-                                        except Exception as e: st.error(f"プレビューエラー: {e}")
-                                    else:
-                                        if has_results:
-                                            try:
-                                                first_img = uploaded_imgs[0]
-                                                with st.spinner("結果画像を描画中..."):
-                                                    overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, 0, 0, 0, 0, preview_color)
-                                                overlay_uint8 = (overlay_img * 255).astype(np.uint8)
-                                                st.image(overlay_uint8, caption=f"1枚目 ({first_img.name}) のAI検出細胞: {cell_count}個", use_container_width=True)
-                                                st.success(st.session_state.get(f"msg_{i}_{j}", "✨ 解析完了！"))
-                                            except Exception as e: st.error(f"結果画像エラー: {e}")
-                                        else: st.info("🧠 AIモードが選択されています。事前のプレビューは一時停止しています。")
+                            target_well_data = [] 
+                            
+                            for w in range(num_wells):
+                                with st.expander(f"📥 Well {w+1} データ枠", expanded=True):
+                                    
+                                    # ★ 消去バグを防ぐための絶対的な金庫キー
+                                    dict_key = f"raw_micro_Cond_{i+1}_{j}_{w}"
+                                    ta_key = f"ta_widget_{i}_{j}_{w}"
 
-                            if uploaded_imgs and st.button("🚀 以上の設定で全画像を解析実行", key=f"btn_{i}_{j}", type="primary"):
-                                with st.spinner("全画像の解析中..." if ("標準" not in ai_mode) else "全画像の解析中..."):
-                                    from utils import analyze_images
-                                    selected_mode = "standard" if "標準" in ai_mode else "ai"
+                                    # 1. ページ読み込み時（または画像クリアでウィジェットが消し飛んだ時）、金庫から復元
+                                    if ta_key not in st.session_state:
+                                        st.session_state[ta_key] = st.session_state.data_dict.get(dict_key, "")
+
+                                    up_idx = st.session_state.get('uploader_idx', 0)
+                                    uploaded_imgs = st.file_uploader(f"Well {w+1} の画像を解析して自動入力 (オプション)", type=['tif', 'png', 'jpg', 'czi'], accept_multiple_files=True, key=f"imgs_{i}_{j}_{w}_{up_idx}")
+                                    
+                                    if uploaded_imgs:
+                                        selected_mode = "standard" if "標準" in ai_mode else "ai"
+                                        with st.container():
+                                            if selected_mode == "standard":
+                                                try:
+                                                    first_img = uploaded_imgs[0]
+                                                    overlay_img, cell_count = get_cached_preview(first_img.getvalue(), first_img.name.lower(), selected_mode, sigma_val, sens_val, dist_val, area_val, preview_color)
+                                                    overlay_uint8 = (overlay_img * 255).astype(np.uint8)
+                                                    st.image(overlay_uint8, caption=f"プレビュー ({first_img.name}): {cell_count}細胞", width=300)
+                                                except Exception as e: st.error(f"プレビューエラー: {e}")
+                                            else:
+                                                st.info("🧠 AIモード選択中（プレビュー非表示）")
+
+                                    do_analyze = False
+                                    if uploaded_imgs:
+                                        do_analyze = st.button(f"🚀 Well {w+1} の画像を個別に解析", key=f"btn_{i}_{j}_{w}")
+
+                                    # 2. 解析実行時に、テキストエリアと金庫の「両方」に直接書き込む
+                                    if uploaded_imgs and (do_analyze or analyze_all):
+                                        with st.spinner(f"条件 {i+1} - Well {w+1} を解析中..."):
+                                            from utils import analyze_images
+                                            selected_mode = "standard" if "標準" in ai_mode else "ai"
+                                            well_cells = []
+                                            val_list = []
+                                            
+                                            for img in uploaded_imgs:
+                                                try:
+                                                    res, _ = analyze_images([img], mode=selected_mode, sigma=sigma_val, sensitivity=sens_val, min_distance=dist_val, min_area=area_val)
+                                                    for val in res:
+                                                        well_cells.append({"image": img.name, "val": float(val)})
+                                                        val_list.append(str(float(val)))
+                                                except Exception as e:
+                                                    st.error(f"{img.name} の解析エラー: {e}")
+                                            
+                                            val_str = "\n".join(val_list)
+                                            st.session_state[f"t_json_{i}_{j}_{w}"] = json.dumps(well_cells)
+                                            
+                                            # ★ ここが命綱：両方に書き込む
+                                            st.session_state[ta_key] = val_str
+                                            st.session_state.data_dict[dict_key] = val_str
+                                            
+                                            processed_any = True
+                                            if do_analyze:
+                                                st.rerun()
+
+                                    stored_json = st.session_state.get(f"t_json_{i}_{j}_{w}", "[]")
                                     try:
-                                        results, summary_text = analyze_images(uploaded_imgs, mode=selected_mode, sigma=sigma_val, sensitivity=sens_val, min_distance=dist_val, min_area=area_val)
-                                        st.session_state[f"t_{i}_{j}"] = "\n".join([f"{val:.3f}" for val in results])
-                                        st.session_state[f"msg_{i}_{j}"] = f"✨ 合計 {len(results)} 個の細胞を抽出しました！\n\n（内訳👉 {summary_text}）"
-                                        st.rerun()
-                                    except Exception as e: st.error(str(e))
+                                        cells_data = json.loads(stored_json)
+                                    except:
+                                        cells_data = []
+                                        
+                                    cell_count = len(cells_data)
+                                    if cell_count > 0:
+                                        img_counts = {}
+                                        for c in cells_data:
+                                            img_name = c.get("image", "Manual Input")
+                                            img_counts[img_name] = img_counts.get(img_name, 0) + 1
+                                            
+                                        detail_str = ", ".join([f"{img}: {cnt}細胞" for img, cnt in img_counts.items()])
+                                        st.markdown(f"<span style='color:#4ade80;font-weight:bold;'>✅ 解析完了：合計 {cell_count} 細胞（{detail_str}）</span>", unsafe_allow_html=True)
+
+                                    # 3. テキストエリアの描画
+                                    val_text = st.text_area(
+                                        "細胞ごとの数値 (別ソフトからのコピペも可能):", 
+                                        key=ta_key, 
+                                        height=120, 
+                                        placeholder="ここにImageJ等で定量した数値を縦にペーストしてください"
+                                    )
+                                    
+                                    # 4. ユーザーが手動で編集・コピペした場合に備え、毎秒金庫にバックアップ
+                                    st.session_state.data_dict[dict_key] = val_text
+                                    target_well_data.append(val_text)
                             
-                            st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{target_names[j]}データ:</span>", unsafe_allow_html=True)
-                            if f"t_{i}_{j}" not in st.session_state: st.session_state[f"t_{i}_{j}"] = ""
-                            n_t_list.append(st.text_area("t_area", height=130, key=f"t_{i}_{j}", label_visibility="collapsed", placeholder=p_t_fmt.format(target=target_names[j])))
+                            n_t_list.append(target_well_data)
+                        
                         input_data.append((st.session_state[f"up_{i}"], st.session_state[f"dn_{i}"], n_t_list, [], exclude_flag))
                         
                     elif num_targets == 1:
@@ -331,10 +431,11 @@ def render_data_input(config, num_cond):
                             n_t_list = []
                             for j in range(num_targets):
                                 with cols_manual[j]:
-                                    st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{target_names[j]}:</span>", unsafe_allow_html=True)
+                                    tgt_display = target_names[j] if target_names[j] else f"Target {j+1}"
+                                    st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{tgt_display}:</span>", unsafe_allow_html=True)
                                     if f"t_{i}_{j}" not in st.session_state: 
                                         st.session_state[f"t_{i}_{j}"] = st.session_state.data_dict.get(f"raw_t_Cond_{i+1}_{j}", "")
-                                    n_t_val = st.text_area("t_com_area", height=100, key=f"t_{i}_{j}", label_visibility="collapsed", placeholder=p_t_fmt.format(target=target_names[j]))
+                                    n_t_val = st.text_area("t_com_area", height=100, key=f"t_{i}_{j}", label_visibility="collapsed", placeholder=p_t_fmt.format(target=tgt_display))
                                     st.session_state.data_dict[f"raw_t_Cond_{i+1}_{j}"] = n_t_val
                                     n_t_list.append(n_t_val)
                             input_data.append((st.session_state[f"up_{i}"], st.session_state[f"dn_{i}"], n_t_list, n_l_list, exclude_flag))
@@ -342,20 +443,26 @@ def render_data_input(config, num_cond):
                             n_t_list, n_l_list = [], []
                             for j in range(num_targets):
                                 ct, cl = st.columns(2)
+                                tgt_display = target_names[j] if target_names[j] else f"Target {j+1}"
+                                load_display = loading_names[j] if loading_names[j] else f"Loading {j+1}"
                                 with ct:
-                                    st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{target_names[j]}:</span>", unsafe_allow_html=True)
+                                    st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>{tgt_display}:</span>", unsafe_allow_html=True)
                                     if f"t_{i}_{j}" not in st.session_state: 
                                         st.session_state[f"t_{i}_{j}"] = st.session_state.data_dict.get(f"raw_t_Cond_{i+1}_{j}", "")
-                                    n_t_val = st.text_area("t_sep_area", height=100, key=f"t_{i}_{j}", label_visibility="collapsed", placeholder=p_t_fmt.format(target=target_names[j]))
+                                    n_t_val = st.text_area("t_sep_area", height=100, key=f"t_{i}_{j}", label_visibility="collapsed", placeholder=p_t_fmt.format(target=tgt_display))
                                     st.session_state.data_dict[f"raw_t_Cond_{i+1}_{j}"] = n_t_val
                                     n_t_list.append(n_t_val)
                                 with cl:
-                                    st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>対応する {loading_names[j]}:</span>", unsafe_allow_html=True)
+                                    st.markdown(f"<span style='font-size: 0.9em; font-weight: bold;'>対応する {load_display}:</span>", unsafe_allow_html=True)
                                     if f"l_{i}_{j}" not in st.session_state: 
                                         st.session_state[f"l_{i}_{j}"] = st.session_state.data_dict.get(f"raw_l_Cond_{i+1}_{j}", "")
-                                    n_l_val = st.text_area("l_sep_area", height=100, key=f"l_{i}_{j}", label_visibility="collapsed", placeholder=p_l_fmt.format(loading=loading_names[j]))
+                                    n_l_val = st.text_area("l_sep_area", height=100, key=f"l_{i}_{j}", label_visibility="collapsed", placeholder=p_l_fmt.format(loading=load_display))
                                     st.session_state.data_dict[f"raw_l_Cond_{i+1}_{j}"] = n_l_val
                                     n_l_list.append(n_l_val)
                             input_data.append((st.session_state[f"up_{i}"], st.session_state[f"dn_{i}"], n_t_list, n_l_list, exclude_flag))
+
+    if is_microscope and analyze_all and processed_any:
+        st.toast("✨ すべての画像の解析と数値の抽出が完了しました！")
+        st.rerun()
 
     return input_data
