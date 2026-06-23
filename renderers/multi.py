@@ -25,9 +25,15 @@ plt.rcParams['mathtext.rm'] = 'Arial'
 plt.rcParams['mathtext.it'] = 'Arial:italic'
 plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
+def get_font(text):
+    for c in str(text):
+        if unicodedata.east_asian_width(c) in 'FWA' or ord(c) > 0x024F:
+            return 'IPAexGothic'
+    return 'Arial'
+
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial', svg_str)
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "MS PGothic", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
 
 def embed_state_in_svg(svg_bytes):
@@ -49,45 +55,30 @@ def embed_state_in_svg(svg_bytes):
     except:
         return svg_bytes
 
-# ★ 修正：隣り合う文字の実際の長さを個別に測り、1文字分の隙間を判定する完璧なロジック
 def calc_rotation(labels, xs, font_size, fig_width, x_span):
     if len(xs) < 2 or not labels or len(xs) != len(labels): return 0
-    
-    # X座標とラベルをペアにして左から順に並べる
     pairs = sorted(zip(xs, labels), key=lambda item: item[0])
     
     def get_text_width(text):
         w = 0
         for c in str(text):
-            # 半角英数は細いので0.55としてリアルな幅を計算
             w += 1.0 if unicodedata.east_asian_width(c) in 'FWA' else 0.55
         return w
         
     char_width_inch = font_size / 72.0
     axes_width_inch = fig_width * 0.8
     
-    # 全ての隣り合うペアを順番にチェック
     for i in range(len(pairs) - 1):
         x1, lbl1 = pairs[i]
         x2, lbl2 = pairs[i+1]
-        
-        if x2 - x1 <= 1e-5: continue # 同じ場所ならスキップ
-        
-        # 2点間の物理的な距離（インチ）
+        if x2 - x1 <= 1e-5: continue
         dx_inch = ((x2 - x1) / x_span) * axes_width_inch
-        
-        # 2つの文字が中心からお互いに向かって伸びてくる長さ（インチ）
         w1_inch = get_text_width(lbl1) * char_width_inch
         w2_inch = get_text_width(lbl2) * char_width_inch
         occupied_inch = (w1_inch / 2.0) + (w2_inch / 2.0)
-        
-        # 実際の隙間
         space_inch = dx_inch - occupied_inch
-        
-        # 隙間が1文字分未満なら斜め書きに判定して終了
         if space_inch < (char_width_inch * 1.0):
             return 45
-            
     return 0
 
 def render_multi_target(input_data, config):
@@ -100,25 +91,29 @@ def render_multi_target(input_data, config):
     raw_processed_multi = {j: {} for j in range(config['num_targets'])}
     dropped_warnings, non_param_warnings, exclude_flags = set(), set(), []
     
+    raw_target_data_multi = {j: {} for j in range(config['num_targets'])}
+    raw_loading_data_multi = {j: {} for j in range(config['num_targets'])}
+    
     for idx, item in enumerate(input_data):
         u, d, val_t_list, val_l_list = item[0], item[1], item[2], item[3] if len(item) > 3 else []
         exclude_flag = item[4] if len(item) > 4 else False
         exclude_flags.append(exclude_flag)
         
         for j in range(config['num_targets']):
-            if config['is_microscope']: raw_processed_multi[j][f"C_{idx}"] = parse_text(val_t_list[j])
-            else:
-                t_nums, l_nums = parse_text(val_t_list[j]), parse_text(val_l_list[j])
-                length = max(len(t_nums), len(l_nums))
-                t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
-                l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
-                
-                processed = []
-                for t, l in zip(t_nums_ext, l_nums_ext):
-                    if np.isnan(t) or np.isnan(l): processed.append(np.nan)
-                    elif config['is_qpcr']: processed.append(t - l)
-                    else: processed.append(np.nan if l == 0 else t / l)
-                raw_processed_multi[j][f"C_{idx}"] = processed
+            t_nums, l_nums = parse_text(val_t_list[j]), parse_text(val_l_list[j])
+            raw_target_data_multi[j][f"C_{idx}"] = list(t_nums)
+            raw_loading_data_multi[j][f"C_{idx}"] = list(l_nums)
+            
+            length = max(len(t_nums), len(l_nums))
+            t_nums_ext = t_nums + [np.nan] * (length - len(t_nums))
+            l_nums_ext = l_nums + [np.nan] * (length - len(l_nums))
+            
+            processed = []
+            for t, l in zip(t_nums_ext, l_nums_ext):
+                if np.isnan(t) or np.isnan(l): processed.append(np.nan)
+                elif config['is_qpcr']: processed.append(t - l)
+                else: processed.append(np.nan if l == 0 else t / l)
+            raw_processed_multi[j][f"C_{idx}"] = processed
                 
         upper_labels.append(u or f"U_{idx+1}")
         lower_labels.append(d or "")
@@ -209,17 +204,10 @@ def render_multi_target(input_data, config):
     for j in range(config['num_targets']):
         for i, uid in enumerate(internal_ids):
             cx = x_coords_multi[j][uid]
-            if config['is_microscope']:
-                d_list_safe = [v for v in final_norm_multi[j][uid] if not np.isnan(v)] or [np.nan]
-                ax.boxplot([d_list_safe], positions=[cx], widths=bar_width*1.5, patch_artist=True, 
-                           boxprops=dict(facecolor='white', color='black', linewidth=1.2), capprops=dict(color='black', linewidth=1.2),
-                           whiskerprops=dict(color='black', linewidth=1.2), medianprops=dict(color='black', linewidth=1.5), 
-                           flierprops=dict(marker='o', markerfacecolor='black', markeredgecolor='black', alpha=0.8, markersize=4))
-            else:
-                mean_val, err_val = np.nanmean(final_norm_multi[j][uid]), calc_error(final_norm_multi[j][uid], config['error_bar_type'])
-                label_name = upper_labels[i] if (j == 0 and i == upper_labels.index(upper_labels[i])) else ""
-                ax.bar(cx, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
-                       width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_name)
+            mean_val, err_val = np.nanmean(final_norm_multi[j][uid]), calc_error(final_norm_multi[j][uid], config['error_bar_type'])
+            label_name = upper_labels[i] if (j == 0 and i == upper_labels.index(upper_labels[i])) else ""
+            ax.bar(cx, mean_val if not np.isnan(mean_val) else 0, yerr=err_val if not np.isnan(err_val) else 0, 
+                   width=bar_width, color=palette[upper_labels[i]], edgecolor='black', capsize=3, error_kw=dict(ecolor='black', lw=1.2), label=label_name)
 
     for spine in ax.spines.values(): spine.set_visible(True); spine.set_color('black'); spine.set_linewidth(1.5)
     
@@ -248,7 +236,7 @@ def render_multi_target(input_data, config):
     ax.set_xticks(target_centers)
     ax.set_xticklabels([])
     for j, c in enumerate(target_centers):
-        ax.text(c, y_tgt, config['target_names'][j], ha='center', va=va_tgt, rotation=rot_tgt, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black')
+        ax.text(c, y_tgt, config['target_names'][j], ha='center', va=va_tgt, rotation=rot_tgt, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(config['target_names'][j]))
     
     all_vals = [v for j in range(config['num_targets']) for vals in final_norm_multi[j].values() for v in vals if not np.isnan(v)]
     current_max_y = max(all_vals + [0]) if all_vals else 1.0
@@ -288,19 +276,25 @@ def render_multi_target(input_data, config):
     if x_vals: 
         ax.set_xlim(x_min_val, x_max_val)
         
-    ax.set_ylabel(config['ylabel_input'], fontsize=base_lbl_fs, fontweight="bold", color='black', labelpad=10)
+    ax.set_ylabel(config['ylabel_input'], fontsize=base_lbl_fs, fontweight="bold", color='black', labelpad=10, fontname=get_font(config['ylabel_input']))
     
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        if by_label: ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold'})
+        if by_label: 
+            leg_font = 'Arial'
+            for lbl in by_label.keys():
+                if get_font(lbl) == 'IPAexGothic':
+                    leg_font = 'IPAexGothic'
+                    break
+            ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold', 'family': leg_font})
 
     expected_n = n_list[0] if (n_list := [len([v for v in raw_processed_multi[0][u] if not np.isnan(v)]) for u in internal_ids]) and len(set(n_list)) == 1 else "varies"
     star_str = ", " + ", ".join([f"{s} p < {0.05 if s=='*' else 0.01 if s=='**' else 0.001}" for s in ["*", "**", "***"] if s in plotted_stars]) if plotted_stars else ""
     title_str = f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
     
     if not config.get('show_stats', True): title_str = f"n={expected_n}"
-    ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right')
+    if title_str: ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
 
     st.pyplot(fig)
     
@@ -309,16 +303,26 @@ def render_multi_target(input_data, config):
         err_label = "SEM" if "SEM" in config['error_bar_type'] else "SD"
         pd.DataFrame([{'ターゲット名': config['target_names'][j], '上段ラベル': upper_labels[i], '下段ラベル': lower_labels[i], '平均': np.nanmean(final_norm_multi[j][u]), err_label: calc_error(final_norm_multi[j][u], config['error_bar_type'])} for j in range(config['num_targets']) for i, u in enumerate(internal_ids)]).to_excel(writer, sheet_name='Summary', index=False)
         
-        ws = writer.book['Summary']
-        ws.cell(row=2, column=7, value="💡 【複数ターゲットの棒グラフ最短作成手順】")
-        ws.cell(row=3, column=7, value="1. 1行目（見出し）を選択し、[データ]タブ ＞ [フィルター] をクリック。")
-        ws.cell(row=4, column=7, value="2. 『ターゲット名』の▼をクリックし、グラフにしたいターゲットを1つだけ選んで絞り込む。")
-        ws.cell(row=5, column=7, value="3. 表示された『上段ラベル』と『平均』の列を同時選択し、[挿入] ＞ [縦棒グラフ] を作成。")
-        ws.cell(row=6, column=7, value="4. グラフの棒をクリックし、[＋] ＞ [誤差範囲] ＞ [その他の誤差範囲オプション]。")
-        ws.cell(row=7, column=7, value=f"5. 『カスタム』を選び、『値の指定』で正負両方に、フィルター後の表示されている『{err_label}』の列をドラッグして指定すれば完成！")
+        detailed_rows = []
+        for j in range(config['num_targets']):
+            for i, uid in enumerate(internal_ids):
+                c_title = f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i]
+                t_list = raw_target_data_multi[j].get(uid, [])
+                l_list = raw_loading_data_multi[j].get(uid, [])
+                proc_list = raw_processed_multi[j].get(uid, [])
+                norm_list = final_norm_multi[j].get(uid, [])
+                
+                max_len = max(len(t_list), len(l_list), len(proc_list), len(norm_list))
+                for r_idx in range(max_len):
+                    row_dict = {"ターゲット名": config['target_names'][j], "条件名": c_title}
+                    row_dict["生データ (Target)"] = t_list[r_idx] if r_idx < len(t_list) else np.nan
+                    row_dict["生データ (Loading Control)"] = l_list[r_idx] if r_idx < len(l_list) else np.nan
+                    calc_name = "計算過程 (Target - Loading)" if config['is_qpcr'] else "計算過程 (Target / Loading)"
+                    row_dict[calc_name] = proc_list[r_idx] if r_idx < len(proc_list) else np.nan
+                    row_dict["正規化後データ"] = norm_list[r_idx] if r_idx < len(norm_list) else np.nan
+                    detailed_rows.append(row_dict)
+        pd.DataFrame(detailed_rows).to_excel(writer, sheet_name='Detailed_Data', index=False)
 
-        pd.DataFrame([{"ターゲット名": config['target_names'][j], "条件名": f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i], "正規化データ": float(val)} for j in range(config['num_targets']) for i, u in enumerate(internal_ids) for val in final_norm_multi[j][u] if not np.isnan(val)]).to_excel(writer, sheet_name='Normalized_Data', index=False)
-        
         stat_data = []
         for j in range(config['num_targets']):
             for u1, u2, p in p_pairs_multi[j]:
