@@ -1,17 +1,33 @@
 import streamlit as st
 
+def init_ss(k, v):
+    if k not in st.session_state:
+        st.session_state[k] = v
+
 def setup_config(col_input):
     st.sidebar.header("⚙️ 全体設定")
-    selected_exp = st.sidebar.selectbox('実験手法:', ['Western Blotting (WB)', 'HPLC', 'qPCR', 'MTT Assay (細胞生存率)', '蛍光顕微鏡 (Box Plot)'], key='selected_exp')
-    num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=1, max_value=20, value=2, step=1, key='num_cond')
+    selected_exp = st.sidebar.selectbox('実験手法:', [
+        'Western Blotting (WB)', 
+        'HPLC', 
+        'qPCR', 
+        'MTT Assay (細胞生存率・折れ線比較)', 
+        'MTT Assay (IC50・シグモイド曲線)', 
+        '蛍光顕微鏡 (Box Plot)'
+    ], key='selected_exp')
+    
+    init_ss('num_cond', 2)
+    num_cond = st.sidebar.number_input('手動モード時の条件数:', min_value=1, max_value=20, step=1, key='num_cond')
 
-    is_mtt = 'MTT' in selected_exp
+    is_mtt_ic50 = 'IC50' in selected_exp
+    is_mtt_any = 'MTT' in selected_exp
+    
     is_microscope = '顕微鏡' in selected_exp
     is_qpcr = 'qPCR' in selected_exp
     is_hplc = 'HPLC' in selected_exp
     is_multi_capable = 'WB' in selected_exp or is_qpcr or is_hplc
 
-    num_targets = st.sidebar.number_input('ターゲットの数 (1つのグラフにまとめる数):', min_value=1, max_value=10, value=1, step=1, key='num_targets') if is_multi_capable else 1
+    init_ss('num_targets', 1)
+    num_targets = st.sidebar.number_input('ターゲットの数 (1つのグラフにまとめる数):', min_value=1, max_value=10, step=1, key='num_targets') if is_multi_capable else 1
 
     if 'WB' in selected_exp:
         t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: HO-1', 'Loading Control:', '例: HSP90', 'Relative Band Intensity'
@@ -19,7 +35,7 @@ def setup_config(col_input):
         t_label, t_ph, l_label, l_ph, y_label_def = '物質名:', '例: PpIX', 'タンパク質濃度:', '例: protein', 'Intracellular Concentration\n[nmol / mg ・ protein]'
     elif 'qPCR' in selected_exp:
         t_label, t_ph, l_label, l_ph, y_label_def = 'Target:', '例: PDK1', 'Loading Control:', '例: β-ACTIN', 'Relative mRNA level'
-    elif is_mtt:
+    elif is_mtt_any:
         t_label, t_ph, l_label, l_ph, y_label_def = '細胞株:', '例: PC3', '薬剤名:', '例: ALA', 'Cell Viability [%]'
     elif is_microscope:
         t_label, t_ph, l_label, l_ph, y_label_def = '観察対象:', '例: ROS / GFP', '', '', 'Relative Fluorescence Intensity'
@@ -31,57 +47,78 @@ def setup_config(col_input):
         st.header("🎯 ターゲット設定")
         if num_targets == 1:
             c_t, c_l = st.columns(2)
+            init_ss('t_name_raw_0', '')
+            init_ss('l_name_raw_0', '')
             with c_t: t_name_raw = st.text_input(t_label, placeholder=t_ph, key='t_name_raw_0').strip()
             with c_l: l_name_raw = st.text_input(l_label, placeholder=l_ph, key='l_name_raw_0').strip() if not is_microscope else ""
-            target_names.append(t_name_raw or ("Cell Line" if is_mtt else "Target"))
-            loading_names.append(l_name_raw or ("Drug" if is_mtt else ("" if is_microscope else "Loading Control")))
+            target_names.append(t_name_raw)
+            loading_names.append(l_name_raw)
         else:
-            if not is_mtt and not is_microscope:
+            if not is_mtt_any and not is_microscope:
                 is_common_loading = "共通" in st.radio("Loading Controlの扱い:", ["共通 (全てのターゲットで同じデータを使用)", "ターゲットごとに個別"], horizontal=True, key='is_common_loading_radio')
                 if is_common_loading:
+                    init_ss('l_name_raw_com', '')
                     l_name_raw = st.text_input(f'共通の {l_label}', placeholder=l_ph, key='l_name_raw_com').strip()
-                    loading_names = [l_name_raw or "Loading Control"] * num_targets
+                    loading_names = [l_name_raw] * num_targets
             
             for i in range(num_targets):
-                if not is_common_loading and not is_mtt and not is_microscope:
+                init_ss(f't_name_raw_{i+1}', '')
+                init_ss(f'l_name_raw_{i+1}', '')
+                if not is_common_loading and not is_mtt_any and not is_microscope:
                     c_t, c_l = st.columns(2)
-                    with c_t: target_names.append(st.text_input(f'{t_label} {i+1}:', placeholder=f'Target {i+1}', key=f't_name_raw_{i+1}').strip() or f"Target {i+1}")
-                    with c_l: loading_names.append(st.text_input(f'{l_label} {i+1}:', placeholder=f'Loading {i+1}', key=f'l_name_raw_{i+1}').strip() or f"Loading {i+1}")
+                    with c_t: target_names.append(st.text_input(f'{t_label} {i+1}:', placeholder=f'Target {i+1}', key=f't_name_raw_{i+1}').strip())
+                    with c_l: loading_names.append(st.text_input(f'{l_label} {i+1}:', placeholder=f'Loading {i+1}', key=f'l_name_raw_{i+1}').strip())
                 else:
-                    target_names.append(st.text_input(f'{t_label} {i+1}:', placeholder=f'Target {i+1}', key=f't_name_raw_{i+1}').strip() or f"Target {i+1}")
-                    if is_mtt: loading_names.append("Drug")
+                    target_names.append(st.text_input(f'{t_label} {i+1}:', placeholder=f'Target {i+1}', key=f't_name_raw_{i+1}').strip())
+                    if is_mtt_any: loading_names.append("Drug")
                     elif is_microscope: loading_names.append("")
 
-    t_name = target_names[0]
-    l_name = loading_names[0] if loading_names else ("Drug" if is_mtt else "" if is_microscope else "Loading Control")
-    y_label_full = y_label_def if (is_mtt or is_microscope or is_hplc or num_targets > 1) else f"{y_label_def}\n[{t_name} / {l_name}]"
+    t_name = target_names[0] if target_names else ""
+    l_name = loading_names[0] if loading_names else ""
+    
+    # ★ 修正: 入力欄が空欄でも、Y軸ラベルのデフォルト文字には Target 等を補う
+    display_t_name = t_name if t_name else "Target"
+    display_l_name = l_name if l_name else "Loading Control"
+
+    if is_mtt_any or is_microscope or is_hplc or num_targets > 1:
+        y_label_full = y_label_def
+    else:
+        y_label_full = f"{y_label_def}\n[{display_t_name} / {display_l_name}]"
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("**📊 グラフ・軸設定**")
-    # ★ 修正: Y軸ラベルがターゲット名に自動連動するよう、記憶用ID(key)を削除しました！
     ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height=68)
 
+    microscope_stat = "median"
     if is_microscope:
         st.sidebar.markdown("---")
+        st.sidebar.subheader("🔬 顕微鏡データ・統計設定")
+        init_ss('microscope_stat_ui', '中央値 (Median) - 外れ値に強い・推奨')
+        m_stat_choice = st.sidebar.radio(
+            "ウェル代表値の算出方法:", 
+            ['中央値 (Median) - 外れ値に強い・推奨', '平均値 (Mean) - 全体量を重視'], 
+            key='microscope_stat_ui'
+        )
+        microscope_stat = "median" if "中央値" in m_stat_choice else "mean"
+
         with st.sidebar.expander("❓ 調整のコツ（何が変わるの？）", expanded=False):
             st.markdown("""
             プレビュー画像の**「黄色の輪郭線」**を見ながら調整してください。
-
-            * **1. ぼかしの強さ (Sigma)**
-            画像を滑らかにして細かいノイズを消します。数値を上げすぎると隣り合う細胞がくっついてしまいます。
-            * **2. 閾値の感度 (Sensitivity)**
-            細胞として認識する「明るさの基準」です。数値を下げると暗い細胞も拾いますが、背景のモヤモヤも拾いやすくなります。
-            * **3. 細胞間の最小距離 (ピクセル)**
-            細胞同士を区切る距離です。細胞が密集していて1つに繋がってしまう場合は「小さく」、1つの細胞が細かく分割されてしまう場合は「大きく」します。
-            * **4. 細胞の最小サイズ (ピクセル)**
-            指定したピクセルより小さいものは「ゴミ（死細胞や破片など）」として除外されます。
+            * **1. ぼかしの強さ (Sigma)** ...
+            * **2. 閾値の感度 (Sensitivity)** ...
+            * **3. 細胞間の最小距離 (ピクセル)** ...
+            * **4. 細胞の最小サイズ (ピクセル)** ...
             """)
         with st.sidebar.expander("🔬 画像解析パラメータ (標準モード用)", expanded=False):
             preview_color = st.selectbox("🎨 プレビューの表示色:", ["自動 (メタデータから判別)", "緑 (Green)", "赤 (Red)", "青 (Blue)", "シアン (Cyan)", "マゼンタ (Magenta)", "白黒 (Gray)"], key='preview_color')
-            sigma_val = st.slider("1. ぼかしの強さ (Sigma):", min_value=0.5, max_value=10.0, value=1.5, step=0.5, key='sigma_val')
-            sens_val = st.slider("2. 閾値の感度 (Sensitivity):", min_value=0.5, max_value=2.0, value=1.0, step=0.1, key='sens_val')
-            dist_val = st.slider("3. 細胞間の最小距離 (ピクセル):", min_value=5, max_value=150, value=20, step=5, key='dist_val')
-            area_val = st.slider("4. 細胞の最小サイズ (ピクセル):", min_value=10, max_value=2000, value=200, step=10, key='area_val')
+            init_ss('sigma_val', 1.5)
+            sigma_val = st.slider("1. ぼかしの強さ (Sigma):", min_value=0.5, max_value=10.0, step=0.5, key='sigma_val')
+            init_ss('sens_val', 1.0)
+            sens_val = st.slider("2. 閾値の感度 (Sensitivity):", min_value=0.5, max_value=2.0, step=0.1, key='sens_val')
+            init_ss('dist_val', 20)
+            dist_val = st.slider("3. 細胞間の最小距離 (ピクセル):", min_value=5, max_value=150, step=5, key='dist_val')
+            init_ss('area_val', 200)
+            area_val = st.slider("4. 細胞の最小サイズ (ピクセル):", min_value=10, max_value=2000, step=10, key='area_val')
     else:
         preview_color = "自動 (メタデータから判別)"
         sigma_val, sens_val, dist_val, area_val = 1.5, 1.0, 20, 200
@@ -89,7 +126,8 @@ def setup_config(col_input):
     st.sidebar.markdown("---")
     st.sidebar.header("🖌️ レイアウト・統計設定")
 
-    show_stats = st.sidebar.toggle("統計結果（★）をグラフに表示する", value=True, key='show_stats')
+    init_ss('show_stats', True)
+    show_stats = st.sidebar.toggle("統計結果（★）をグラフに表示する", key='show_stats')
     
     error_bar_type = "SD (標準偏差)"
     var_equal = False
@@ -103,7 +141,7 @@ def setup_config(col_input):
         with st.sidebar.expander("📐 統計検定の詳細設定", expanded=False):
             error_bar_type = st.radio("エラーバーの種類:", ["SD (標準偏差)", "SEM (標準誤差)"], key='error_bar_type')
             
-            if not is_mtt:
+            if not is_mtt_any:
                 pairing_options = ['独立 (パラメトリック)', '独立 (ノンパラメトリック)'] if is_microscope else ['独立 (パラメトリック)', '独立 (ノンパラメトリック)', '対応あり (パラメトリック)', '対応あり (ノンパラメトリック)']
                 pairing_mode = st.radio('統計検定の前提:', pairing_options, key='pairing_mode')
                 var_equal = '等しい' in st.radio('ばらつき(分散)の仮定:', ['分散が等しいと仮定する (古典的)', '分散が異なると仮定する (Welch等)'], key='var_equal_radio') if ('パラメトリック' in pairing_mode and '独立' in pairing_mode) else False
@@ -121,16 +159,30 @@ def setup_config(col_input):
                 is_grouped_test = False
 
     st.sidebar.markdown("**📏 出力設定**")
-    svg_font_path = st.sidebar.checkbox("SVG文字のアウトライン化 (パワポズレ防止)", value=True, key='svg_font_path', help="パワポ等の別ソフトに貼り付けた際のレイアウト崩れを防ぎます。パワポ上で文字を打ち直したい場合のみチェックを外してください。")
+    init_ss('svg_font_path', True)
+    svg_font_path = st.sidebar.checkbox("SVG文字のアウトライン化 (パワポズレ防止)", key='svg_font_path')
 
-    mtt_markers = []
-    mtt_colors = []
+    init_ss('mtt_outlier_mode', '通常 (p < 0.05)')
+    if is_mtt_any:
+        with st.sidebar.expander("🚨 外れ値検知センサー設定", expanded=True):
+            mtt_outlier_mode = st.radio("検知感度 (スミルノフ・グラブス検定):", ['オフ', '通常 (p < 0.05)', '厳しめ (p < 0.01)'], key='mtt_outlier_mode')
+    else:
+        mtt_outlier_mode = 'オフ'
 
-    if not is_mtt:
+    mtt_markers, mtt_colors = [], []
+    ic50_fix_bottom = False
+    ic50_ctrl_gap = 1.0
+    
+    show_mtt_bar = False
+    mtt_mock_col = '12'
+    mtt_bar_color = 'グラデーション (黒→灰)'
+    mtt_bar_width = 0.4
+    mtt_bar_gap = 0.05
+    mtt_group_gap = 0.6
+
+    if not is_mtt_any:
         with st.sidebar.expander("📊 グラフの基本レイアウト", expanded=False):
             layout_mode = "条件ごとにグループ化" if num_targets > 1 else st.radio("棒の配置:", ["条件ごとにグループ化", "均等に並べる"], key='layout_mode_radio')
-            if num_targets > 1: st.info("💡 複数ターゲットモードでは、棒の配置は自動的に「ターゲット毎のグループ化」になります。")
-            
             label_style = st.radio("X軸ラベルの表示形式:", ["1段 ＋ 系列名（凡例）", "横ラベルを2段にする（上下段）"], key='label_style_radio')
             color_mode = st.radio("棒の配色:", ["色分け", "すべて黒"], key='color_mode_radio')
     else:
@@ -155,42 +207,85 @@ def setup_config(col_input):
                 st.markdown(f"**【 条件 {i+1} 】**")
                 c1, c2 = st.columns(2)
                 with c1:
-                    sel_m = st.selectbox(f"マーカー {i+1}:", marker_keys, index=0, key=f"mtt_m_{i}", label_visibility="collapsed")
+                    init_ss(f"mtt_m_{i}", marker_keys[0])
+                    sel_m = st.selectbox(f"マーカー {i+1}:", marker_keys, key=f"mtt_m_{i}", label_visibility="collapsed")
                     mtt_markers.append(marker_options[sel_m])
                 with c2:
-                    sel_c = st.selectbox(f"色 {i+1}:", color_keys, index=i % len(color_keys), key=f"mtt_c_{i}", label_visibility="collapsed")
+                    init_ss(f"mtt_c_{i}", color_keys[i % len(color_keys)])
+                    sel_c = st.selectbox(f"色 {i+1}:", color_keys, key=f"mtt_c_{i}", label_visibility="collapsed")
                     mtt_colors.append(color_options[sel_c])
+
+        if is_mtt_ic50:
+            with st.sidebar.expander("📈 IC50曲線の詳細設定", expanded=True):
+                init_ss('ic50_fix_bottom', True)
+                ic50_fix_bottom = st.checkbox("曲線のBottom(底)を 0% 付近に固定する", key='ic50_fix_bottom', help="最大濃度でも細胞が全滅していない場合、このチェックを入れることでPrismと同じような綺麗なS字を描きやすくなります。")
+                
+                init_ss('ic50_ctrl_gap', 1.0)
+                ic50_ctrl_gap = st.slider("Control(濃度0)と最低濃度の表示間隔 (Log):", min_value=0.5, max_value=2.0, step=0.1, key='ic50_ctrl_gap', help="グラフ左端の「0」と最初のプロットの間隔を調整します。1.0前後が見栄えの黄金比です。")
+
+        with st.sidebar.expander("🌿 ベースライン毒性（Mock比較）設定", expanded=True):
+            init_ss('show_mtt_bar', False)
+            show_mtt_bar = st.checkbox("ベースライン毒性評価用の棒グラフも同時に作成する", key='show_mtt_bar', help="ALA未添加状態での、完全無処理(Mock)とsiRNA等のトランスフェクション毒性を比較する棒グラフを出力します。")
+            if show_mtt_bar:
+                init_ss('mtt_mock_col', '12')
+                mtt_mock_col = st.text_input("完全無処理(Mock)の列:", value='12', key='mtt_mock_col', help="プレート内で薬物を一切入れず、トランスフェクションもしていない完全コントロールの列番号を指定してください。")
+                
+                st.markdown("<span style='font-size: 0.9em; font-weight:bold;'>🎨 棒グラフのデザイン設定</span>", unsafe_allow_html=True)
+                init_ss('mtt_bar_color', 'グラデーション (黒→灰)')
+                mtt_bar_color = st.radio("棒の配色:", ["グラデーション (黒→灰)", "すべて黒"], key='mtt_bar_color')
+                
+                init_ss('mtt_bar_width', 0.4)
+                mtt_bar_width = st.slider("棒の太さ:", min_value=0.1, max_value=1.0, value=0.4, step=0.05, key='mtt_bar_width')
+                
+                init_ss('mtt_bar_gap', 0.05)
+                mtt_bar_gap = st.slider("Mockと処理群の間隔:", min_value=0.0, max_value=1.0, value=0.05, step=0.05, key='mtt_bar_gap')
+                
+                init_ss('mtt_group_gap', 0.6)
+                mtt_group_gap = st.slider("プレート間の間隔:", min_value=0.0, max_value=2.0, value=0.6, step=0.1, key='mtt_group_gap')
 
     st.sidebar.markdown("---")
     st.sidebar.header("🎨 グラフ詳細デザイン調整")
     with st.sidebar.expander("文字サイズ・グラフ幅・棒の微調整", expanded=False):
-        st.info("💡 横幅を「0」にするとデータ数に合わせて自動調整されます。")
-        fig_width = st.slider("グラフの横幅 (0で自動):", min_value=0.0, max_value=30.0, value=0.0, step=0.5, key='fig_width')
-        fig_height = st.slider("グラフの縦幅:", min_value=3.0, max_value=20.0, value=5.0, step=0.5, key='fig_height')
-        title_fontsize = st.slider("タイトルの文字サイズ:", min_value=8, max_value=36, value=14, step=1, key='title_fontsize')
-        label_fontsize = st.slider("軸ラベル(Y軸等)の文字サイズ:", min_value=8, max_value=36, value=16, step=1, key='label_fontsize')
+        init_ss('fig_width', 0.0)
+        fig_width = st.slider("グラフの横幅 (0で自動):", min_value=0.0, max_value=30.0, step=0.5, key='fig_width')
+        init_ss('fig_height', 5.0)
+        fig_height = st.slider("グラフの縦幅:", min_value=3.0, max_value=20.0, step=0.5, key='fig_height')
+        init_ss('title_fontsize', 14)
+        title_fontsize = st.slider("タイトルの文字サイズ:", min_value=8, max_value=36, step=1, key='title_fontsize')
+        init_ss('label_fontsize', 16)
+        label_fontsize = st.slider("軸ラベル(Y軸等)の文字サイズ:", min_value=8, max_value=36, step=1, key='label_fontsize')
         
-        if not is_mtt:
-            tick_fontsize = st.slider("目盛り(数値)の文字サイズ:", min_value=8, max_value=36, value=14, step=1, key='tick_fontsize')
-            x_label_fontsize = st.slider("横ラベル(条件名等)の文字サイズ:", min_value=8, max_value=36, value=14, step=1, key='x_label_fontsize')
+        if not is_mtt_any:
+            init_ss('tick_fontsize', 14)
+            tick_fontsize = st.slider("目盛り(数値)の文字サイズ:", min_value=8, max_value=36, step=1, key='tick_fontsize')
+            init_ss('x_label_fontsize', 14)
+            x_label_fontsize = st.slider("横ラベル(条件名等)の文字サイズ:", min_value=8, max_value=36, step=1, key='x_label_fontsize')
         else:
-            tick_fontsize = st.slider("縦横の目盛り(数値)の文字サイズ:", min_value=8, max_value=36, value=12, step=1, key='tick_fontsize')
+            init_ss('tick_fontsize', 12)
+            tick_fontsize = st.slider("縦横の目盛り(数値)の文字サイズ:", min_value=8, max_value=36, step=1, key='tick_fontsize')
             x_label_fontsize = 14
 
-        legend_fontsize = st.slider("凡例の文字サイズ:", min_value=8, max_value=36, value=12, step=1, key='legend_fontsize')
+        init_ss('legend_fontsize', 12)
+        legend_fontsize = st.slider("凡例の文字サイズ:", min_value=8, max_value=36, step=1, key='legend_fontsize')
         
         st.markdown("---")
-        default_y_tick = 20.0 if is_mtt else 0.0
-        y_tick_interval = st.number_input("縦軸(Y軸)の目盛り間隔 (0で自動):", min_value=0.0, max_value=1000000.0, value=default_y_tick, step=0.1, key='y_tick_interval')
+        default_y_tick = 20.0 if is_mtt_any else 0.0
+        init_ss('y_tick_interval', default_y_tick)
+        y_tick_interval = st.number_input("縦軸(Y軸)の目盛り間隔 (0で自動):", min_value=0.0, max_value=1000000.0, step=0.1, key='y_tick_interval')
 
-        if not is_mtt:
+        if not is_mtt_any:
             st.markdown("---")
-            bar_width_input = st.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, value=(0.25 if layout_mode == "条件ごとにグループ化" else 0.17), step=0.01, key='bar_width_input')
+            def_bw = 0.25 if layout_mode == "条件ごとにグループ化" else 0.17
+            init_ss('bar_width_input', def_bw)
+            bar_width_input = st.slider("棒の太さ調整:", min_value=0.05, max_value=0.80, step=0.01, key='bar_width_input')
             if layout_mode == "条件ごとにグループ化":
-                bar_gap_input = st.slider("グループ内の棒の間隔:", min_value=0.0, max_value=1.50, value=0.02, step=0.01, key='bar_gap_input_g')
-                group_gap_input = st.slider("グループ間の間隔:", min_value=0.0, max_value=3.00, value=0.50, step=0.05, key='group_gap_input_g')
+                init_ss('bar_gap_input_g', 0.02)
+                bar_gap_input = st.slider("グループ内の棒の間隔:", min_value=0.0, max_value=1.50, step=0.01, key='bar_gap_input_g')
+                init_ss('group_gap_input_g', 0.50)
+                group_gap_input = st.slider("グループ間の間隔:", min_value=0.0, max_value=3.00, step=0.05, key='group_gap_input_g')
             else:
-                bar_gap_input = st.slider("棒の間隔調整:", min_value=0.0, max_value=1.50, value=0.50, step=0.01, key='bar_gap_input_s')
+                init_ss('bar_gap_input_s', 0.50)
+                bar_gap_input = st.slider("棒の間隔調整:", min_value=0.0, max_value=1.50, step=0.01, key='bar_gap_input_s')
                 group_gap_input = 0.0
         else:
             bar_width_input = 0.17
@@ -216,14 +311,28 @@ def setup_config(col_input):
     elif 'qPCR' in selected_exp:
         p_t_fmt = "【{target}】のCt値を縦にペースト\n(例)\n25.4\n24.8\n..."
         p_l_fmt = "【{loading}】のCt値を縦にペースト\n(例)\n18.2\n18.5\n..."
-    elif is_mtt:
+    elif is_mtt_any:
         p_t_fmt, p_l_fmt = "", ""
     elif is_microscope:
         p_t_fmt = "【{target}】の細胞ごとの数値を縦にペースト\n(例)\n150.2\n148.5\n..."
         p_l_fmt = ""
 
     config = {
-        'is_mtt': is_mtt, 'is_microscope': is_microscope, 'is_qpcr': is_qpcr, 'is_hplc': is_hplc,
+        'is_mtt': is_mtt_any, 
+        'is_mtt_ic50': is_mtt_ic50,
+        'ic50_fix_bottom': ic50_fix_bottom,
+        'ic50_ctrl_gap': ic50_ctrl_gap,
+        
+        'show_mtt_bar': show_mtt_bar,
+        'mtt_mock_col': mtt_mock_col,
+        'mtt_bar_color': mtt_bar_color,
+        'mtt_bar_width': mtt_bar_width,
+        'mtt_bar_gap': mtt_bar_gap,
+        'mtt_group_gap': mtt_group_gap,
+        'mtt_outlier_mode': mtt_outlier_mode,
+        
+        'is_microscope': is_microscope, 'is_qpcr': is_qpcr, 'is_hplc': is_hplc,
+        'microscope_stat': microscope_stat,
         'num_targets': num_targets, 'target_names': target_names, 'loading_names': loading_names,
         't_name': t_name, 'l_name': l_name, 'ylabel_input': ylabel_input,
         'error_bar_type': error_bar_type, 'layout_mode': layout_mode, 'color_mode': color_mode,
