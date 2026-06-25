@@ -26,10 +26,7 @@ plt.rcParams['mathtext.it'] = 'Arial:italic'
 plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 def get_font(text):
-    for c in str(text):
-        if unicodedata.east_asian_width(c) in 'FWA' or ord(c) > 0x024F:
-            return 'IPAexGothic'
-    return 'Arial'
+    return 'sans-serif'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
@@ -263,8 +260,7 @@ def render_mtt_ic50(input_data, config):
         xlabel_text = f"{config['l_name']} [{config['mtt_unit']}]"
         ax_i.set_xlabel(xlabel_text, fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8, fontname=get_font(xlabel_text))
         
-        n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for col in s_cols_plot]) if s_cols_plot else len(valid_rows)
-        
+        n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, col])) for col in s_cols_plot]) if s_cols_plot else len(valid_rows)
         title_str = f"n={n_indiv}"
         if popt is not None and config.get('show_stats', True):
             title_prefix = f"IC50 {display_ic50_str}" if ">" in display_ic50_str else f"IC50 = {display_ic50_str}"

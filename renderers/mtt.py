@@ -26,10 +26,7 @@ plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 # ★ 文字列に日本語が含まれるか判定し、フォントを出し分ける関数
 def get_font(text):
-    for c in str(text):
-        if unicodedata.east_asian_width(c) in 'FWA' or ord(c) > 0x024F:
-            return 'IPAexGothic'
-    return 'Arial'
+    return 'sans-serif'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')

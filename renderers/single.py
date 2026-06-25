@@ -26,10 +26,7 @@ plt.rcParams['mathtext.it'] = 'Arial:italic'
 plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 def get_font(text):
-    for c in str(text):
-        if unicodedata.east_asian_width(c) in 'FWA' or ord(c) > 0x024F:
-            return 'IPAexGothic'
-    return 'Arial'
+    return 'sans-serif'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
@@ -372,7 +369,17 @@ def render_single_target(input_data, config):
             idx1, idx2 = internal_ids.index(u1), internal_ids.index(u2)
             c1 = f"{upper_labels[idx1]} ({lower_labels[idx1]})" if lower_labels[idx1] else upper_labels[idx1]
             c2 = f"{upper_labels[idx2]} ({lower_labels[idx2]})" if lower_labels[idx2] else upper_labels[idx2]
-            stat_data.append({"比較": f"{c1} vs {c2}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"})
+            stat_data.append({
+                "比較": f"{c1} vs {c2}", 
+                "p値": p if not np.isnan(p) else "N/A", 
+                "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A",
+                "検定手法": test_desc_flat,
+                "検定の前提": "ノンパラメトリック" if config.get('is_non_param') else "パラメトリック",
+                "対応の有無": "対応あり" if config.get('is_paired') else "対応なし",
+                "多重比較": "Controlとの比較" if config.get('is_vs_control') else "全ペア総当たり",
+                "エラーバー": config.get('error_bar_type', '設定なし'),
+                "正規化": config.get('norm_mode', '設定なし')
+            })
         if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
 
         try:

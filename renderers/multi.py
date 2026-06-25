@@ -26,10 +26,7 @@ plt.rcParams['mathtext.it'] = 'Arial:italic'
 plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 def get_font(text):
-    for c in str(text):
-        if unicodedata.east_asian_width(c) in 'FWA' or ord(c) > 0x024F:
-            return 'IPAexGothic'
-    return 'Arial'
+    return 'sans-serif'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
@@ -81,6 +78,122 @@ def calc_rotation(labels, xs, font_size, fig_width, x_span):
             return 45
     return 0
 
+def draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords_multi, fw, x_span, bar_width):
+    x_lbl_fs = config.get('x_label_fontsize', 14)
+    fig_h = config.get('fig_height', 5.5)
+    x_fs_ratio = (x_lbl_fs / 14.0) * (5.5 / fig_h)
+    trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
+    
+    ax.tick_params(axis='x', bottom=False, top=False)
+    ax.set_xticks([])
+    ax.set_xticklabels([])
+    
+    global_lowest_y = 0
+    # 下段ラベルが1つでも存在するかチェック
+    has_lower = any(l for l in lower_labels if l)
+    
+    if config['label_style'] == "1段 ＋ 系列名（凡例）":
+        unique_low = sorted(list(set(lower_labels)), key=lambda x: lower_labels.index(x))
+        all_xs_low, all_lbls_low = [], []
+        for j in range(config['num_targets']):
+            for low in unique_low:
+                xs_t = [x_coords_multi[j][internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
+                if xs_t: 
+                    all_xs_low.append(sum(xs_t)/len(xs_t))
+                    all_lbls_low.append(low)
+                    
+        rot = calc_rotation(all_lbls_low, all_xs_low, x_lbl_fs, fw, x_span)
+        y_pos = -0.015 * x_fs_ratio
+        va_val = 'top'
+        extra_margin = 0
+        if rot > 0:
+            max_len = max([len(str(l)) for l in unique_low if l]) if unique_low else 0
+            extra_margin = max_len * 0.013 * x_fs_ratio
+            y_pos = -0.015 * x_fs_ratio - extra_margin
+            va_val = 'center'
+            
+        for j in range(config['num_targets']):
+            for low in unique_low:
+                xs = [x_coords_multi[j][internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
+                if xs: ax.text(sum(xs) / len(xs), y_pos, low, ha='center', va=va_val, rotation=rot, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(low))
+                
+        global_lowest_y = y_pos - (0.015 * x_fs_ratio if rot == 0 else extra_margin)
+        
+    else:
+        # --- 上段ラベルの描画 ---
+        all_xs_up, all_lbls_up = [], []
+        for j in range(config['num_targets']):
+            all_xs_up.extend([x_coords_multi[j][uid] for uid in internal_ids])
+            all_lbls_up.extend(upper_labels)
+            
+        rot_up = calc_rotation(all_lbls_up, all_xs_up, x_lbl_fs, fw, x_span)
+        y_up = -0.015 * x_fs_ratio
+        va_up = 'top'
+        extra_margin_up = 0
+        
+        if rot_up > 0:
+            max_up_len = max([len(str(u)) for u in upper_labels if u]) if upper_labels else 0
+            extra_margin_up = max_up_len * 0.013 * x_fs_ratio
+            y_up = -0.015 * x_fs_ratio - extra_margin_up
+            va_up = 'center'
+            
+        # single.pyに合わせた y_line (区切り線) の高さ設定
+        if rot_up == 0: 
+            y_line = y_up - 0.075 * x_fs_ratio 
+        else:
+            y_line = y_up - extra_margin_up - 0.015 * x_fs_ratio
+            
+        for j in range(config['num_targets']):
+            for i, uid in enumerate(internal_ids):
+                ax.text(x_coords_multi[j][uid], y_up, upper_labels[i], ha='center', va=va_up, rotation=rot_up, transform=trans, fontsize=x_lbl_fs, color='black', fontweight='bold', fontname=get_font(upper_labels[i]))
+        
+        # --- 下段ラベルの描画 (存在する場合のみ) ---
+        if has_lower:
+            all_xs_low_center, all_low_labels_clean = [], []
+            for j in range(config['num_targets']):
+                for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
+                    if not label: continue
+                    xs = [x_coords_multi[j][internal_ids[x[0]]] for x in elements]
+                    all_xs_low_center.append((min(xs) + max(xs)) / 2)
+                    all_low_labels_clean.append(label)
+                    
+            rot_low = calc_rotation(all_low_labels_clean, all_xs_low_center, x_lbl_fs, fw, x_span)
+            va_low = 'top'
+            y_low = y_line - 0.015 * x_fs_ratio
+            
+            extra_margin_low = 0
+            if rot_low > 0:
+                max_low_len = max([len(str(l)) for l in lower_labels if l]) if lower_labels else 0
+                extra_margin_low = max_low_len * 0.013 * x_fs_ratio
+                y_low = y_line - 0.015 * x_fs_ratio - extra_margin_low
+                va_low = 'center'
+                
+            for j in range(config['num_targets']):
+                for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
+                    if not label: continue
+                    xs = [x_coords_multi[j][internal_ids[x[0]]] for x in elements]
+                    x_start, x_end = min(xs), max(xs)
+                    if x_start != x_end: ax.plot([x_start - bar_width/2.5, x_end + bar_width/2.5], [y_line, y_line], color='black', lw=1.2, transform=trans, clip_on=False)
+                    ax.text((x_start + x_end) / 2, y_low, label, ha='center', va=va_low, rotation=rot_low, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(label))
+            
+            # ターゲット名を描画する際のベースラインを下段ラベルの下に設定
+            global_lowest_y = y_line - 0.075 * x_fs_ratio if rot_low == 0 else y_low - extra_margin_low - 0.015 * x_fs_ratio
+        else:
+            # 下段がない場合は、ターゲット名を描画するベースラインを上段ラベルのすぐ下に引き上げる
+            global_lowest_y = y_line
+
+    # --- ターゲット名（最下段）の描画 ---
+    if config['num_targets'] > 1:
+        # single.pyの区切り線と同じマージンでターゲット名を配置
+        y_tgt = global_lowest_y - 0.015 * x_fs_ratio
+        for j in range(config['num_targets']):
+            xs_target = list(x_coords_multi[j].values())
+            if xs_target:
+                x_start, x_end = min(xs_target), max(xs_target)
+                c = (x_start + x_end) / 2
+                ax.plot([x_start - bar_width/2, x_end + bar_width/2], [global_lowest_y, global_lowest_y], color='black', lw=1.5, transform=trans, clip_on=False)
+                ax.text(c, y_tgt, config['target_names'][j], ha='center', va='top', transform=trans, fontsize=x_lbl_fs+2, fontweight='bold', color='black', fontname=get_font(config['target_names'][j]))
+                
 def render_multi_target(input_data, config):
     if config.get('svg_font_path', True):
         plt.rcParams['svg.fonttype'] = 'path'
@@ -217,26 +330,9 @@ def render_multi_target(input_data, config):
     
     ax.tick_params(axis='y', colors='black', direction='in', left=True, right=False, length=5, width=1.5, labelsize=base_fs)
     ax.tick_params(axis='x', bottom=False, top=False)
+    draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords_multi, fw, x_span, bar_width)
     
-    trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
     
-    base_lbl_fs = config.get('label_fontsize', 16)
-    lbl_fs_ratio = (base_lbl_fs / 16.0) * (5.5 / fig_h)
-
-    rot_tgt = calc_rotation(config['target_names'], target_centers, x_lbl_fs, fw, x_span)
-    
-    y_tgt = -0.030 * x_fs_ratio
-    va_tgt = 'top'
-    if rot_tgt > 0:
-        max_tgt_len = max([len(str(t)) for t in config['target_names'] if t]) if config['target_names'] else 0
-        extra_margin_tgt = max_tgt_len * 0.013 * x_fs_ratio
-        y_tgt = -0.030 * x_fs_ratio - extra_margin_tgt
-        va_tgt = 'center'
-        
-    ax.set_xticks(target_centers)
-    ax.set_xticklabels([])
-    for j, c in enumerate(target_centers):
-        ax.text(c, y_tgt, config['target_names'][j], ha='center', va=va_tgt, rotation=rot_tgt, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(config['target_names'][j]))
     
     all_vals = [v for j in range(config['num_targets']) for vals in final_norm_multi[j].values() for v in vals if not np.isnan(v)]
     current_max_y = max(all_vals + [0]) if all_vals else 1.0
@@ -246,11 +342,14 @@ def render_multi_target(input_data, config):
             if not np.isnan(m) and not np.isnan(e): current_max_y = max(current_max_y, m + e)
     if current_max_y == 0: current_max_y = 1.0
     
-    y_shift, h, base_bracket_y, max_element_y = current_max_y * 0.15, current_max_y * 0.025, current_max_y * 1.10, current_max_y
+    y_shift, h = current_max_y * 0.15, current_max_y * 0.025
+    global_base_bracket_y = current_max_y * 1.10
+    max_element_y = current_max_y
     plotted_stars = set()
     
     for j in range(config['num_targets']):
         levels, max_level, sig_pairs = [], 0, []
+        base_bracket_y = global_base_bracket_y
         for u1, u2, p in p_pairs_multi[j]:
             if p >= 0.05 or np.isnan(p) or u1 not in x_coords_multi[j] or u2 not in x_coords_multi[j]: continue
             sig_pairs.append((min(x_coords_multi[j][u1], x_coords_multi[j][u2]), max(x_coords_multi[j][u1], x_coords_multi[j][u2]), "***" if p < 0.001 else "**" if p < 0.01 else "*"))
@@ -263,9 +362,7 @@ def render_multi_target(input_data, config):
             by = base_bracket_y + placed_level * y_shift; max_element_y = max(max_element_y, by + h)
             ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
             ax.text((x_start + x_end) / 2, by, stars, ha='center', va='bottom', color='black', fontsize=base_fs, fontweight='bold')
-        base_bracket_y += (max_level + 1) * y_shift if sig_pairs else 0
-        max_element_y = max(max_element_y, base_bracket_y)
-
+       
     ax.set_ylim(0, max(current_max_y * 1.2, max_element_y * 1.15))
     
     if config.get('y_tick_interval', 0) > 0:
@@ -276,7 +373,7 @@ def render_multi_target(input_data, config):
     if x_vals: 
         ax.set_xlim(x_min_val, x_max_val)
         
-    ax.set_ylabel(config['ylabel_input'], fontsize=base_lbl_fs, fontweight="bold", color='black', labelpad=10, fontname=get_font(config['ylabel_input']))
+    ax.set_ylabel(config['ylabel_input'], fontsize=base_fs + 2, fontweight="bold", color='black', labelpad=10, fontname=get_font(config['ylabel_input']))
     
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
         handles, labels = ax.get_legend_handles_labels()
@@ -329,7 +426,18 @@ def render_multi_target(input_data, config):
                 idx1, idx2 = internal_ids.index(u1), internal_ids.index(u2)
                 c1 = f"{upper_labels[idx1]} ({lower_labels[idx1]})" if lower_labels[idx1] else upper_labels[idx1]
                 c2 = f"{upper_labels[idx2]} ({lower_labels[idx2]})" if lower_labels[idx2] else upper_labels[idx2]
-                stat_data.append({"ターゲット名": config['target_names'][j], "比較": f"{c1} vs {c2}", "p値": p if not np.isnan(p) else "N/A", "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A"})
+                stat_data.append({
+                    "ターゲット名": config['target_names'][j], 
+                    "比較": f"{c1} vs {c2}", 
+                    "p値": p if not np.isnan(p) else "N/A", 
+                    "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A",
+                    "検定手法": test_desc_flat,
+                    "検定の前提": "ノンパラメトリック" if config.get('is_non_param') else "パラメトリック",
+                    "対応の有無": "対応あり" if config.get('is_paired') else "対応なし",
+                    "多重比較": "Controlとの比較" if config.get('is_vs_control') else "全ペア総当たり",
+                    "エラーバー": config.get('error_bar_type', '設定なし'),
+                    "正規化": config.get('norm_mode', '設定なし')
+                })
         if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
 
     col_dl1, col_dl2 = st.columns(2)

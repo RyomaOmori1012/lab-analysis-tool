@@ -25,10 +25,7 @@ plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 # ★ 文字列に日本語が含まれるか判定し、フォントを出し分ける関数
 def get_font(text):
-    for c in str(text):
-        if unicodedata.east_asian_width(c) in 'FWA' or ord(c) > 0x024F:
-            return 'IPAexGothic'
-    return 'Arial'
+    return 'sans-serif'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
@@ -268,7 +265,7 @@ def render_mtt_bar(input_data, config):
         # ★ 日本語フォントを自動判定
         ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
         
-        return fig, p_pairs
+        return fig, p_pairs, test_desc
 
     # --- 1. 統合グラフのデータ構築（横並びレイアウト） ---
     int_x_coords = []
@@ -307,7 +304,7 @@ def render_mtt_bar(input_data, config):
         for _ in int_test_pairs:
             colors_int.extend(get_colors(2, config.get('mtt_bar_color', 'グラデーション (黒→灰)')))
             
-        fig_int, p_pairs_int = draw_custom_bar_chart(int_data_lists, int_labels, int_x_coords, colors_int, "統合", int_test_pairs, bw)
+        fig_int, p_pairs_int, t_name_int = draw_custom_bar_chart(int_data_lists, int_labels, int_x_coords, colors_int, "統合", int_test_pairs, bw)
         st.pyplot(fig_int)
     
     # --- 2. 個別グラフの描画 ---
@@ -320,7 +317,17 @@ def render_mtt_bar(input_data, config):
     for i_idx, j_idx, p in p_pairs_int:
         c1 = int_labels[i_idx]
         c2 = int_labels[j_idx]
-        stat_data.append({"グラフ": "統合グラフ", "比較": f"{c1} vs {c2}", "p値": p, "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns"})
+        # ▼ 2箇所目：stat_data.append の中身をごっそり入れ替える
+        stat_data.append({
+            "グラフ": "統合グラフ", 
+            "比較": f"{c1} vs {c2}", 
+            "p値": p, 
+            "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns",
+            "検定手法": t_name_int,
+            "検定の前提": "ノンパラメトリック" if config.get('is_non_param') else "パラメトリック",
+            "対応の有無": "対応あり" if config.get('is_paired') else "対応なし",
+            "エラーバー": config.get('error_bar_type', '設定なし')
+        })
         
     for i, res in enumerate(indiv_results):
         if res['exclude']: continue
@@ -329,7 +336,7 @@ def render_mtt_bar(input_data, config):
         dlists = [res['mock_norm'], res['cond_norm']]
         cols_c = get_colors(2, config.get('mtt_bar_color', 'グラデーション (黒→灰)'))
         
-        f_indiv, p_pairs_indiv = draw_custom_bar_chart(dlists, lbls, x_indiv, cols_c, f"Plate {i+1}", [(0, 1)], bw)
+        f_indiv, p_pairs_indiv, t_name_indiv = draw_custom_bar_chart(dlists, lbls, x_indiv, cols_c, f"Plate {i+1}", [(0, 1)], bw)
         with cols[i % len(cols)]:
             st.pyplot(f_indiv)
             indiv_figs.append((res['plate_name'], f_indiv))
@@ -337,7 +344,17 @@ def render_mtt_bar(input_data, config):
         for i_idx, j_idx, p in p_pairs_indiv:
             c1 = lbls[i_idx]
             c2 = lbls[j_idx]
-            stat_data.append({"グラフ": f"個別 ({res['plate_name']})", "比較": f"{c1} vs {c2}", "p値": p, "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns"})
+            # ▼ 2箇所目：stat_data.append の中身をごっそり入れ替える
+            stat_data.append({
+                "グラフ": f"個別 ({res['plate_name']})", 
+                "比較": f"{c1} vs {c2}", 
+                "p値": p, 
+                "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns",
+                "検定手法": t_name_indiv,
+                "検定の前提": "ノンパラメトリック" if config.get('is_non_param') else "パラメトリック",
+                "対応の有無": "対応あり" if config.get('is_paired') else "対応なし",
+                "エラーバー": config.get('error_bar_type', '設定なし')
+            })
 
     # --- Excel 書き出し ---
     excel_buffer = io.BytesIO()
