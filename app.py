@@ -4,6 +4,20 @@ import json
 import base64
 import re
 import time
+import platform  # ←追加
+
+# --- 【超重要】URL版(Linux)で追加したフォントが反映されない問題(キャッシュ)を自動修復 ---
+if platform.system() == 'Linux':
+    import matplotlib.font_manager as fm
+    # 'Liberation Sans' がサーバーの記憶(キャッシュ)にない場合のみ、記憶を消して再スキャンする
+    if not any('Liberation Sans' in f.name for f in fm.fontManager.ttflist):
+        import matplotlib as mpl
+        import os
+        import shutil
+        cache_dir = mpl.get_cachedir()
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir)
+        fm._load_fontmanager(try_read_cache=False)
 
 # --- SVGの裏側から隠しデータを抽出する魔法の関数 ---
 def extract_state_from_svg(svg_bytes):
