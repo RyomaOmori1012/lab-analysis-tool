@@ -19,6 +19,7 @@ from utils import calc_error, run_statistical_test, parse_text
 
 import platform
 
+
 # --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
 plt.rcParams['font.family'] = 'sans-serif'
 
