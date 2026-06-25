@@ -162,7 +162,7 @@ def render_data_input(config, num_cond):
 
         if input_mode == "エクセル列ごとに一括ペースト（おすすめ✨）":
             c_n_input, c_info = st.columns([1, 2.5])
-            n_per_group = c_n_input.number_input("📊 1群あたりのデータ数 (n数):", min_value=1, max_value=100, step=1, key='n_per_group')
+            n_per_group = c_n_input.number_input("📊 1群あたりのデータ数 (n数):", min_value=1, max_value=100, value=3, step=1, key='n_per_group')
             c_info.info("💡 生データをそのままペーストしてください。指定したn数ごとに自動でグループ化されます。")
 
             bulk_t_list, bulk_l_list = [], []

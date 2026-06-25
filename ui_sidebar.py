@@ -182,9 +182,9 @@ def setup_config(col_input):
 
     if not is_mtt_any:
         with st.sidebar.expander("📊 グラフの基本レイアウト", expanded=False):
-            layout_mode = "条件ごとにグループ化" if num_targets > 1 else st.radio("棒の配置:", ["条件ごとにグループ化", "均等に並べる"], key='layout_mode_radio')
-            label_style = st.radio("X軸ラベルの表示形式:", ["1段 ＋ 系列名（凡例）", "横ラベルを2段にする（上下段）"], key='label_style_radio')
-            color_mode = st.radio("棒の配色:", ["色分け", "すべて黒"], key='color_mode_radio')
+            layout_mode = "条件ごとにグループ化" if num_targets > 1 else st.radio("棒の配置:", ["条件ごとにグループ化", "均等に並べる"], index=1, key='layout_mode_radio')
+            label_style = st.radio("X軸ラベルの表示形式:", ["1段 ＋ 系列名（凡例）", "横ラベルを2段にする（上下段）"], index=1, key='label_style_radio')
+            color_mode = st.radio("棒の配色:", ["色分け", "すべて黒"], index=1, key='color_mode_radio')
     else:
         layout_mode, norm_mode, label_style = "", "", "横ラベルを2段にする（上下段）"
         color_mode = ""
