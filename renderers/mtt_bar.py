@@ -15,29 +15,24 @@ warnings.filterwarnings('ignore')
 
 from utils import calc_error, run_statistical_test, parse_plate, parse_idx
 
-# --- フォントのグローバル設定 ---
-plt.rcParams['font.family'] = 'sans-serif'
+import platform
+
+# --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
 plt.rcParams['font.family'] = 'sans-serif'
 
-# 優先順位の理由：
-# 1. Arial: ローカルの英数字（絶対王者）
-# 2. Liberation Sans: URL版の英数字（Arialの完璧な代役）
-# 3. MS PGothic: ローカルの日本語
-# 4. IPAexGothic: URL版の日本語
+# 優先順位：1.Arial(英数) 2.Liberation(URL用英数) 3.MS PGothic(ローカル日) 4.IPAexGothic(URL用日)
+# この順番なら、英数はArial/Liberationが、日本語はMS P/IPAが自動で選ばれます。
 plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
 
-# URL版の「細く見える」問題を解決する強制太字設定
-plt.rcParams['font.weight'] = 'bold'
-plt.rcParams['axes.labelweight'] = 'bold'
-plt.rcParams['axes.titleweight'] = 'bold'
-
-# 共通の数式フォント
-plt.rcParams['mathtext.fontset'] = 'dejavusans'
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['mathtext.fontset'] = 'custom'
-plt.rcParams['mathtext.rm'] = 'Arial'
-plt.rcParams['mathtext.it'] = 'Arial:italic'
-plt.rcParams['mathtext.bf'] = 'Arial:bold'
+if platform.system() == 'Linux':
+    # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
+    plt.rcParams['mathtext.fontset'] = 'dejavusans'
+else:
+    # ローカル(Windows/Mac)の最高の設定をそのまま維持
+    plt.rcParams['mathtext.fontset'] = 'custom'
+    plt.rcParams['mathtext.rm'] = 'Arial'
+    plt.rcParams['mathtext.it'] = 'Arial:italic'
+    plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 # ★ 文字列に日本語が含まれるか判定し、フォントを出し分ける関数
 def get_font(text):
@@ -45,7 +40,8 @@ def get_font(text):
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: "Arial", "Liberation Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
+    # 候補をすべて並べておくことで、表示環境に合わせた最適なフォントが選ばれます
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
 
 def embed_state_in_svg(svg_bytes):
