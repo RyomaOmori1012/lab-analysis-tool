@@ -1,0 +1,3 @@
+fonts-liberation
+fonts-ipafont-gothic
+fonts-ipafont-mincho
