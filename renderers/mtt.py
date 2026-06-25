@@ -18,7 +18,8 @@ from utils import calc_error, run_statistical_test, parse_plate, parse_idx
 
 # --- フォントのグローバル設定 ---
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial', 'MS PGothic', 'IPAexGothic']
+plt.rcParams['font.sans-serif'] = ['Arial', 'MS PGothic', 'Liberation Sans', 'IPAexGothic', 'sans-serif']
+plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['mathtext.fontset'] = 'custom'
 plt.rcParams['mathtext.rm'] = 'Arial'
 plt.rcParams['mathtext.it'] = 'Arial:italic'
@@ -30,8 +31,8 @@ def get_font(text):
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    # SVG出力後も英数はArial、日本語はMSPゴシック等になるようフォールバックを設定
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "MS PGothic", "IPAexGothic", sans-serif', svg_str)
+    # ブラウザやパワポで開いた際も、Arialがあればそれを、なければ代用を、と順番に探させる設定です。
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "MS PGothic", "Liberation Sans", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
 
 # --- ★ SVGの裏側に全設定とデータを埋め込む魔法の関数 ---
