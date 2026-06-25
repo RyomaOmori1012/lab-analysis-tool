@@ -19,7 +19,22 @@ from utils import calc_error, run_statistical_test, parse_text
 
 # --- フォントのグローバル設定 ---
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial', 'MS PGothic', 'Liberation Sans', 'IPAexGothic', 'sans-serif']
+plt.rcParams['font.family'] = 'sans-serif'
+
+# 優先順位の理由：
+# 1. Arial: ローカルの英数字（絶対王者）
+# 2. Liberation Sans: URL版の英数字（Arialの完璧な代役）
+# 3. MS PGothic: ローカルの日本語
+# 4. IPAexGothic: URL版の日本語
+plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
+
+# URL版の「細く見える」問題を解決する強制太字設定
+plt.rcParams['font.weight'] = 'bold'
+plt.rcParams['axes.labelweight'] = 'bold'
+plt.rcParams['axes.titleweight'] = 'bold'
+
+# 共通の数式フォント
+plt.rcParams['mathtext.fontset'] = 'dejavusans'
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['mathtext.fontset'] = 'custom'
 plt.rcParams['mathtext.rm'] = 'Arial'
@@ -31,8 +46,7 @@ def get_font(text):
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    # ブラウザやパワポで開いた際も、Arialがあればそれを、なければ代用を、と順番に探させる設定です。
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "MS PGothic", "Liberation Sans", "IPAexGothic", sans-serif', svg_str)
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: "Arial", "Liberation Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
 
 def embed_state_in_svg(svg_bytes):
