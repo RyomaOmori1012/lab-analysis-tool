@@ -83,104 +83,163 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
         if not np.isnan(p_anova):
             pairs.append((0, 1, p_anova))
             
-    else: 
-        if is_non_param:
-            try: _, p_anova = stats.kruskal(*valid_data)
-            except: p_anova = np.nan
-            if not np.isnan(p_anova) and p_anova < 0.05:
-                raw_p, comp_pairs = [], []
-                test_name = "Kruskal-Wallis test followed by Mann-Whitney U test (Holm vs Control)" if is_vs_control else "Kruskal-Wallis test followed by Mann-Whitney U test (Holm)"
-                iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
-                for idxs in iterator:
-                    i, j = (0, idxs) if is_vs_control else idxs
-                    try:
-                        _, p = stats.mannwhitneyu(valid_data[i], valid_data[j], alternative='two-sided')
-                        raw_p.append(p); comp_pairs.append((i, j))
-                    except: pass
-                if raw_p:
-                    _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                    pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
-                    
-        elif is_paired:
+    else: # 3群以上の場合
+        if is_paired:
             lens = [len(d) for d in valid_data]
-            if len(set(lens)) > 1: return np.nan, [], "Friedman test failed (Size mismatch)"
-            try:
-                _, p_anova = stats.friedmanchisquare(*valid_data)
-                test_name = "Friedman test followed by Wilcoxon signed-rank test (Holm)" if not is_vs_control else "Friedman test followed by Wilcoxon (Holm vs Control)"
-            except: return np.nan, [], "Friedman test failed"
+            if len(set(lens)) > 1: return np.nan, [], "Test failed (Size mismatch for paired data)"
+            
+            if is_non_param:
+                # ====================================================
+                # ① 対応あり・ノンパラメトリック (Friedman検定)
+                # ====================================================
+                try:
+                    _, p_anova = stats.friedmanchisquare(*valid_data)
+                    test_name = "Friedman test followed by Wilcoxon signed-rank test (Holm)" if not is_vs_control else "Friedman test followed by Wilcoxon (Holm vs Control)"
+                except: return np.nan, [], "Friedman test failed"
+                    
+                if not np.isnan(p_anova) and p_anova < 0.05:
+                    raw_p, comp_pairs = [], []
+                    iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
+                    for idxs in iterator:
+                        i, j = (0, idxs) if is_vs_control else idxs
+                        try:
+                            _, p = stats.wilcoxon(valid_data[i], valid_data[j])
+                            raw_p.append(p); comp_pairs.append((i, j))
+                        except: pass
+                    if raw_p:
+                        _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                        pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+            
+            else:
+                # ====================================================
+                # ② 対応あり・パラメトリック (Repeated Measures ANOVA)
+                # ====================================================
+                test_name = "Repeated Measures ANOVA followed by Paired t-test (Holm)" if not is_vs_control else "Repeated Measures ANOVA followed by Paired t-test (Holm vs Control)"
                 
-            if not np.isnan(p_anova) and p_anova < 0.05:
-                raw_p, comp_pairs = [], []
-                iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
-                for idxs in iterator:
-                    i, j = (0, idxs) if is_vs_control else idxs
-                    try:
-                        _, p = stats.wilcoxon(valid_data[i], valid_data[j])
-                        raw_p.append(p); comp_pairs.append((i, j))
-                    except: pass
-                if raw_p:
-                    _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                    pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                try:
+                    from statsmodels.stats.anova import AnovaRM
+                    import pandas as pd
+                    
+                    # statsmodelsのAnovaRMはデータフレーム(Long format)を要求するため変換
+                    df_data = []
+                    for i_cond, d in enumerate(valid_data):
+                        for i_subj, val in enumerate(d):
+                            df_data.append({'subject': str(i_subj), 'cond': str(i_cond), 'value': float(val)})
+                    df = pd.DataFrame(df_data)
+                    
+                    # 反復測定分散分析の実行
+                    rm_anova = AnovaRM(df, depvar='value', subject='subject', within=['cond']).fit()
+                    p_anova = rm_anova.anova_table['Pr > F'].iloc[0]
+                except: 
+                    p_anova = np.nan
                 
-        else:
-            if var_equal:
-                test_name = "One-way ANOVA followed by Student's t-test (Holm)" if is_vs_control else "One-way ANOVA followed by Tukey's test"
-                try: _, p_anova = stats.f_oneway(*valid_data)
+                # 事後検定 (対応ありt検定 + Holm法)
+                if not np.isnan(p_anova) and p_anova < 0.05:
+                    raw_p, comp_pairs = [], []
+                    iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
+                    for idxs in iterator:
+                        i, j = (0, idxs) if is_vs_control else idxs
+                        try:
+                            _, p = stats.ttest_rel(valid_data[i], valid_data[j])
+                            raw_p.append(p); comp_pairs.append((i, j))
+                        except: pass
+                    if raw_p:
+                        _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                        pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+        
+        else: # 対応なし (独立)
+            if is_non_param:
+                # ====================================================
+                # ③ 独立・ノンパラメトリック (Kruskal-Wallis検定)
+                # ====================================================
+                try: _, p_anova = stats.kruskal(*valid_data)
                 except: p_anova = np.nan
                 
                 if not np.isnan(p_anova) and p_anova < 0.05:
-                    if is_vs_control:
+                    raw_p, comp_pairs = [], []
+                    test_name = "Kruskal-Wallis test followed by Mann-Whitney U test (Holm vs Control)" if is_vs_control else "Kruskal-Wallis test followed by Mann-Whitney U test (Holm)"
+                    iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
+                    for idxs in iterator:
+                        i, j = (0, idxs) if is_vs_control else idxs
                         try:
-                            from scipy.stats import dunnett
-                            test_name = "One-way ANOVA followed by Dunnett's test"
-                            res = dunnett(*valid_data[1:], control=valid_data[0])
-                            p_vals = res.pvalue
-                            if np.isscalar(p_vals):
-                                p_vals = [p_vals]
-                            for j in range(1, k):
-                                pairs.append((0, j, p_vals[j-1]))
-                        except (ImportError, AttributeError):
-                            test_name = "One-way ANOVA followed by Student's t-test (Holm)"
+                            _, p = stats.mannwhitneyu(valid_data[i], valid_data[j], alternative='two-sided')
+                            raw_p.append(p); comp_pairs.append((i, j))
+                        except: pass
+                    if raw_p:
+                        _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                        pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+            else:
+                if var_equal:
+                    # ====================================================
+                    # ④ 独立・パラメトリック・等分散 (One-way ANOVA)
+                    # ====================================================
+                    test_name = "One-way ANOVA followed by Student's t-test (Holm)" if is_vs_control else "One-way ANOVA followed by Tukey's test"
+                    try: _, p_anova = stats.f_oneway(*valid_data)
+                    except: p_anova = np.nan
+                    
+                    if not np.isnan(p_anova) and p_anova < 0.05:
+                        if is_vs_control:
+                            try:
+                                from scipy.stats import dunnett
+                                test_name = "One-way ANOVA followed by Dunnett's test"
+                                res = dunnett(*valid_data[1:], control=valid_data[0])
+                                p_vals = res.pvalue
+                                if np.isscalar(p_vals):
+                                    p_vals = [p_vals]
+                                for j in range(1, k):
+                                    pairs.append((0, j, p_vals[j-1]))
+                            except (ImportError, AttributeError):
+                                test_name = "One-way ANOVA followed by Student's t-test (Holm)"
+                                raw_p, comp_pairs = [], []
+                                for j in range(1, k):
+                                    try:
+                                        _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=True)
+                                        raw_p.append(p); comp_pairs.append((0, j))
+                                    except: pass
+                                if raw_p:
+                                    _, corrected_p, _, _ = multipletests(raw_p, method='holm')
+                                    pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
+                        else:
+                            test_name = "One-way ANOVA followed by Tukey's test"
+                            all_v, all_g = [], []
+                            for p_idx, d in enumerate(valid_data):
+                                all_v.extend(d)
+                                all_g.extend([p_idx] * len(d))
+                            try:
+                                tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
+                                # バージョンによる列名の違い（大文字小文字・スペース）を吸収
+                                headers = [str(h).strip().lower() for h in tukey._results_table.data[0]]
+                                g1_idx = next(i for i, h in enumerate(headers) if 'group1' in h)
+                                g2_idx = next(i for i, h in enumerate(headers) if 'group2' in h)
+                                p_idx = next((i for i, h in enumerate(headers) if 'p' in h and ('adj' in h or 'val' in h)), -1)
+                                
+                                for i, row in enumerate(tukey._results_table.data[1:]):
+                                    # 表からp値が取れない場合は、内部属性(tukey.pvalues)から強制取得
+                                    p_val = float(row[p_idx]) if p_idx != -1 else float(tukey.pvalues[i])
+                                    pairs.append((int(row[g1_idx]), int(row[g2_idx]), p_val))
+                            except: pass
+                else:
+                    # ====================================================
+                    # ⑤ 独立・パラメトリック・不等分散 (Welch's ANOVA)
+                    # ====================================================
+                    test_name = "Welch's ANOVA followed by Welch's t-test (Holm)" if is_vs_control else "Welch's ANOVA followed by Games-Howell test"
+                    try: p_anova, gh_pairs = welch_anova_games_howell(valid_data)
+                    except: p_anova = np.nan
+                    
+                    if not np.isnan(p_anova) and p_anova < 0.05:
+                        if is_vs_control:
                             raw_p, comp_pairs = [], []
                             for j in range(1, k):
                                 try:
-                                    _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=True)
+                                    _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=False)
                                     raw_p.append(p); comp_pairs.append((0, j))
                                 except: pass
                             if raw_p:
                                 _, corrected_p, _, _ = multipletests(raw_p, method='holm')
                                 pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
-                    else:
-                        test_name = "One-way ANOVA followed by Tukey's test"
-                        all_v, all_g = [], []
-                        for p_idx, d in enumerate(valid_data):
-                            all_v.extend(d)
-                            all_g.extend([p_idx] * len(d))
-                        try:
-                            tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
-                            df_t = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
-                            for _, row in df_t.iterrows():
-                                pairs.append((int(row['group1']), int(row['group2']), row['p-adj']))
-                        except: pass
-            else:
-                test_name = "Welch's ANOVA followed by Welch's t-test (Holm)" if is_vs_control else "Welch's ANOVA followed by Games-Howell test"
-                try: p_anova, gh_pairs = welch_anova_games_howell(valid_data)
-                except: p_anova = np.nan
-                
-                if not np.isnan(p_anova) and p_anova < 0.05:
-                    if is_vs_control:
-                        raw_p, comp_pairs = [], []
-                        for j in range(1, k):
-                            try:
-                                _, p = stats.ttest_ind(valid_data[0], valid_data[j], equal_var=False)
-                                raw_p.append(p); comp_pairs.append((0, j))
-                            except: pass
-                        if raw_p:
-                            _, corrected_p, _, _ = multipletests(raw_p, method='holm')
-                            pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
-                    else:
-                        pairs = gh_pairs
-                        
+                        else:
+                            pairs = gh_pairs
+                            
     return p_anova, pairs, test_name
 
 # ==========================================

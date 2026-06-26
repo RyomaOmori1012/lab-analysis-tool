@@ -76,7 +76,6 @@ def setup_config(col_input):
     t_name = target_names[0] if target_names else ""
     l_name = loading_names[0] if loading_names else ""
     
-    # ★ 修正: 入力欄が空欄でも、Y軸ラベルのデフォルト文字には Target 等を補う
     display_t_name = t_name if t_name else "Target"
     display_l_name = l_name if l_name else "Loading Control"
 
@@ -273,6 +272,27 @@ def setup_config(col_input):
         legend_fontsize = st.slider("凡例の文字サイズ:", min_value=8, max_value=36, step=1, key='legend_fontsize')
         
         st.markdown("---")
+        st.markdown("**縦位置（高さ）の微調整**")
+        
+        offset_up = 0.0
+        offset_low = 0.0
+        offset_tgt = 0.0
+        
+        if not is_mtt_any:
+            if label_style == "1段 ＋ 系列名（凡例）":
+                init_ss('offset_low', 0.0)
+                offset_low = st.slider("横ラベルの下方シフト量:", min_value=-0.10, max_value=0.50, step=0.01, key='offset_low')
+            else:
+                init_ss('offset_up', 0.0)
+                offset_up = st.slider("上段ラベルの下方シフト量:", min_value=-0.10, max_value=0.50, step=0.01, key='offset_up')
+                init_ss('offset_low', 0.0)
+                offset_low = st.slider("下段ラベル（線ごと）の下方シフト量:", min_value=-0.10, max_value=0.50, step=0.01, key='offset_low')
+
+            if num_targets > 1:
+                init_ss('offset_tgt', 0.0)
+                offset_tgt = st.slider("ターゲット名（線ごと）の下方シフト量:", min_value=-0.10, max_value=0.50, step=0.01, key='offset_tgt')
+        
+        st.markdown("---")
         default_y_tick = 20.0 if is_mtt_any else 0.0
         init_ss('y_tick_interval', default_y_tick)
         y_tick_interval = st.number_input("縦軸(Y軸)の目盛り間隔 (0で自動):", min_value=0.0, max_value=1000000.0, step=0.1, key='y_tick_interval')
@@ -352,7 +372,8 @@ def setup_config(col_input):
         'fig_width': fig_width, 'fig_height': fig_height,
         'title_fontsize': title_fontsize, 'label_fontsize': label_fontsize,
         'tick_fontsize': tick_fontsize, 'x_label_fontsize': x_label_fontsize, 'legend_fontsize': legend_fontsize,
-        'mtt_markers': mtt_markers, 'mtt_colors': mtt_colors
+        'mtt_markers': mtt_markers, 'mtt_colors': mtt_colors,
+        'offset_up': offset_up, 'offset_low': offset_low, 'offset_tgt': offset_tgt
     }
 
     return config, num_cond
