@@ -235,10 +235,11 @@ def render_mtt_bar(input_data, config):
         ax.set_xticks(x_coords)
         
         # ★ 日本語フォントを自動判定
-        xtick_font = 'Arial'
+        xtick_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
         for lbl in labels:
-            if get_font(lbl) == 'IPAexGothic':
-                xtick_font = 'IPAexGothic'
+            f_name = get_font(lbl)
+            if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
+                xtick_font = f_name
                 break
                 
         if rot != 0:
