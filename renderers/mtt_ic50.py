@@ -22,9 +22,8 @@ import platform
 # --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
 plt.rcParams['font.family'] = 'sans-serif'
 
-# 優先順位：1.Arial(英数) 2.Liberation(URL用英数) 3.MS PGothic(ローカル日) 4.IPAexGothic(URL用日)
-# この順番なら、英数はArial/Liberationが、日本語はMS P/IPAが自動で選ばれます。
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
+# 優先順位に Mac用の 'Hiragino Sans' を追加
+plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
 
 if platform.system() == 'Linux':
     # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
@@ -35,13 +34,24 @@ else:
     plt.rcParams['mathtext.rm'] = 'Arial'
     plt.rcParams['mathtext.it'] = 'Arial:italic'
     plt.rcParams['mathtext.bf'] = 'Arial:bold'
+
 def get_font(text):
-    return 'sans-serif'
+    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
+    if re.search(r'[^\x00-\x7F]', str(text)):
+        if platform.system() == 'Linux':
+            return 'IPAexGothic'      # URL版
+        elif platform.system() == 'Darwin':
+            return 'Hiragino Sans'    # Mac版（ローカル）
+        else:
+            return 'MS PGothic'       # Windows版（ローカル）
+    else:
+        # 英数字のみの場合は、こだわり設定の英数フォントを返す
+        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    # 候補をすべて並べておくことで、表示環境に合わせた最適なフォントが選ばれます
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
+    # SVG出力時も、Mac用のHiraginoを追加
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
 
 def embed_state_in_svg(svg_bytes):
@@ -350,10 +360,12 @@ def render_mtt_ic50(input_data, config):
     ax.set_xlabel(xlabel_text, fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8, fontname=get_font(xlabel_text))
     
     if num_p > 1: 
-        leg_font = 'Arial'
+        leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
         for p_name in plate_names:
-            if get_font(p_name) == 'IPAexGothic':
-                leg_font = 'IPAexGothic'
+            f_name = get_font(p_name)
+            # ▼ ここに 'Hiragino Sans' を追加！
+            if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
+                leg_font = f_name
                 break
         ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 13), 'weight': 'normal', 'family': leg_font})
     

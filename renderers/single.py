@@ -19,13 +19,11 @@ from utils import calc_error, run_statistical_test, parse_text
 
 import platform
 
-
 # --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
 plt.rcParams['font.family'] = 'sans-serif'
 
-# 優先順位：1.Arial(英数) 2.Liberation(URL用英数) 3.MS PGothic(ローカル日) 4.IPAexGothic(URL用日)
-# この順番なら、英数はArial/Liberationが、日本語はMS P/IPAが自動で選ばれます。
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
+# 優先順位に Mac用の 'Hiragino Sans' を追加
+plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
 
 if platform.system() == 'Linux':
     # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
@@ -38,12 +36,22 @@ else:
     plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 def get_font(text):
-    return 'sans-serif'
+    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
+    if re.search(r'[^\x00-\x7F]', str(text)):
+        if platform.system() == 'Linux':
+            return 'IPAexGothic'      # URL版
+        elif platform.system() == 'Darwin':
+            return 'Hiragino Sans'    # Mac版（ローカル）
+        else:
+            return 'MS PGothic'       # Windows版（ローカル）
+    else:
+        # 英数字のみの場合は、こだわり設定の英数フォントを返す
+        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    # 候補をすべて並べておくことで、表示環境に合わせた最適なフォントが選ばれます
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
+    # SVG出力時も、Mac用のHiraginoを追加
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
 
 def embed_state_in_svg(svg_bytes):
@@ -87,7 +95,7 @@ def calc_rotation(labels, xs, font_size, fig_width, x_span):
         w2_inch = get_text_width(lbl2) * char_width_inch
         occupied_inch = (w1_inch / 2.0) + (w2_inch / 2.0)
         space_inch = dx_inch - occupied_inch
-        if space_inch < (char_width_inch * 1.0):
+        if space_inch < (char_width_inch * 0.5):
             return 45
     return 0
 
@@ -228,6 +236,9 @@ def render_single_target(input_data, config):
     ax.tick_params(axis='x', bottom=False, top=False); ax.set_xticklabels([]) 
     trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
     
+    offset_up_user = config.get('offset_up', 0.0)
+    offset_low_user = config.get('offset_low', 0.0)
+
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
         xs_low = []
         lbls_low = []
@@ -238,14 +249,16 @@ def render_single_target(input_data, config):
                 lbls_low.append(low)
         rot = calc_rotation(lbls_low, xs_low, x_lbl_fs, fw, x_span)
         
-        y_pos = -0.030 * x_fs_ratio
+        y_pos_base = -0.015 * x_fs_ratio
         va_val = 'top'
+        extra_margin = 0
         if rot > 0:
             max_len = max([len(str(l)) for l in unique_low if l]) if unique_low else 0
             extra_margin = max_len * 0.013 * x_fs_ratio
-            y_pos = -0.030 * x_fs_ratio - extra_margin
+            y_pos_base = -0.015 * x_fs_ratio - extra_margin
             va_val = 'center'
             
+        y_pos = y_pos_base - offset_low_user
         for low in unique_low:
             xs = [x_coords[internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
             if xs: ax.text(sum(xs) / len(xs), y_pos, low, ha='center', va=va_val, rotation=rot, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(low))
@@ -253,19 +266,21 @@ def render_single_target(input_data, config):
         xs_up = [x_coords[uid] for uid in internal_ids]
         rot_up = calc_rotation(upper_labels, xs_up, x_lbl_fs, fw, x_span)
         
-        y_up = -0.015 * x_fs_ratio
+        y_up_base = -0.015 * x_fs_ratio
         va_up = 'top'
         extra_margin_up = 0
         if rot_up > 0:
             max_up_len = max([len(str(u)) for u in upper_labels if u]) if upper_labels else 0
             extra_margin_up = max_up_len * 0.013 * x_fs_ratio
-            y_up = -0.015 * x_fs_ratio - extra_margin_up
+            y_up_base = -0.015 * x_fs_ratio - extra_margin_up
             va_up = 'center'
             
+        y_up = y_up_base - offset_up_user
+        
         if rot_up == 0: 
-            y_line = y_up - 0.075 * x_fs_ratio 
+            y_line_base = y_up_base - 0.075 * x_fs_ratio 
         else:
-            y_line = y_up - extra_margin_up - 0.015 * x_fs_ratio
+            y_line_base = y_up_base - extra_margin_up - 0.015 * x_fs_ratio
         
         for i, uid in enumerate(internal_ids):
             ax.text(x_coords[uid], y_up, upper_labels[i], ha='center', va=va_up, rotation=rot_up, transform=trans, fontsize=x_lbl_fs, color='black', fontweight='bold', fontname=get_font(upper_labels[i]))
@@ -279,15 +294,20 @@ def render_single_target(input_data, config):
             low_labels_clean.append(label)
             
         rot_low = calc_rotation(low_labels_clean, xs_low_center, x_lbl_fs, fw, x_span)
+        
+        y_low_base = y_line_base - 0.015 * x_fs_ratio
         va_low = 'top'
-        y_low = y_line - 0.015 * x_fs_ratio
+        extra_margin_low = 0
         
         if rot_low > 0:
             max_low_len = max([len(str(l)) for l in lower_labels if l]) if lower_labels else 0
             extra_margin_low = max_low_len * 0.013 * x_fs_ratio
-            y_low = y_line - 0.015 * x_fs_ratio - extra_margin_low
+            y_low_base = y_line_base - 0.015 * x_fs_ratio - extra_margin_low
             va_low = 'center'
             
+        y_line = y_line_base - offset_low_user
+        y_low = y_low_base - offset_low_user
+        
         for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
             if not label: continue
             xs = [x_coords[internal_ids[x[0]]] for x in elements]
@@ -334,10 +354,12 @@ def render_single_target(input_data, config):
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         if by_label: 
-            leg_font = 'Arial'
+            leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
             for lbl in by_label.keys():
-                if get_font(lbl) == 'IPAexGothic':
-                    leg_font = 'IPAexGothic'
+                f_name = get_font(lbl)
+                # ▼ ここに 'Hiragino Sans' を追加！
+                if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
+                    leg_font = f_name
                     break
             ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold', 'family': leg_font})
 

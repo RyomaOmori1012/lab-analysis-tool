@@ -23,9 +23,8 @@ import platform
 # --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
 plt.rcParams['font.family'] = 'sans-serif'
 
-# 優先順位：1.Arial(英数) 2.Liberation(URL用英数) 3.MS PGothic(ローカル日) 4.IPAexGothic(URL用日)
-# この順番なら、英数はArial/Liberationが、日本語はMS P/IPAが自動で選ばれます。
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
+# 優先順位に Mac用の 'Hiragino Sans' を追加
+plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
 
 if platform.system() == 'Linux':
     # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
@@ -38,13 +37,24 @@ else:
     plt.rcParams['mathtext.bf'] = 'Arial:bold'
 
 def get_font(text):
-    return 'sans-serif'
+    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
+    if re.search(r'[^\x00-\x7F]', str(text)):
+        if platform.system() == 'Linux':
+            return 'IPAexGothic'      # URL版
+        elif platform.system() == 'Darwin':
+            return 'Hiragino Sans'    # Mac版（ローカル）
+        else:
+            return 'MS PGothic'       # Windows版（ローカル）
+    else:
+        # 英数字のみの場合は、こだわり設定の英数フォントを返す
+        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
 
 def fix_svg_font(svg_bytes):
     svg_str = svg_bytes.getvalue().decode('utf-8')
-    # 候補をすべて並べておくことで、表示環境に合わせた最適なフォントが選ばれます
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
+    # SVG出力時も、Mac用のHiraginoを追加
+    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
     return svg_str.encode('utf-8')
+
 def embed_state_in_svg(svg_bytes):
     try:
         svg_str = svg_bytes.decode('utf-8')
@@ -86,7 +96,7 @@ def calc_rotation(labels, xs, font_size, fig_width, x_span):
         w2_inch = get_text_width(lbl2) * char_width_inch
         occupied_inch = (w1_inch / 2.0) + (w2_inch / 2.0)
         space_inch = dx_inch - occupied_inch
-        if space_inch < (char_width_inch * 1.0):
+        if space_inch < (char_width_inch * 0.5):
             return 45
     return 0
 
@@ -100,8 +110,11 @@ def draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords
     ax.set_xticks([])
     ax.set_xticklabels([])
     
-    global_lowest_y = 0
-    # 下段ラベルが1つでも存在するかチェック
+    offset_up_user = config.get('offset_up', 0.0)
+    offset_low_user = config.get('offset_low', 0.0)
+    offset_tgt_user = config.get('offset_tgt', 0.0)
+    
+    global_lowest_y_base = 0
     has_lower = any(l for l in lower_labels if l)
     
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
@@ -115,21 +128,23 @@ def draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords
                     all_lbls_low.append(low)
                     
         rot = calc_rotation(all_lbls_low, all_xs_low, x_lbl_fs, fw, x_span)
-        y_pos = -0.015 * x_fs_ratio
+        y_pos_base = -0.015 * x_fs_ratio
         va_val = 'top'
         extra_margin = 0
         if rot > 0:
             max_len = max([len(str(l)) for l in unique_low if l]) if unique_low else 0
             extra_margin = max_len * 0.013 * x_fs_ratio
-            y_pos = -0.015 * x_fs_ratio - extra_margin
+            y_pos_base = -0.015 * x_fs_ratio - extra_margin
             va_val = 'center'
+            
+        y_pos = y_pos_base - offset_low_user
             
         for j in range(config['num_targets']):
             for low in unique_low:
                 xs = [x_coords_multi[j][internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
                 if xs: ax.text(sum(xs) / len(xs), y_pos, low, ha='center', va=va_val, rotation=rot, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(low))
                 
-        global_lowest_y = y_pos - (0.015 * x_fs_ratio if rot == 0 else extra_margin)
+        global_lowest_y_base = y_pos_base - (0.015 * x_fs_ratio if rot == 0 else extra_margin)
         
     else:
         # --- 上段ラベルの描画 ---
@@ -139,21 +154,22 @@ def draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords
             all_lbls_up.extend(upper_labels)
             
         rot_up = calc_rotation(all_lbls_up, all_xs_up, x_lbl_fs, fw, x_span)
-        y_up = -0.015 * x_fs_ratio
+        y_up_base = -0.015 * x_fs_ratio
         va_up = 'top'
         extra_margin_up = 0
         
         if rot_up > 0:
             max_up_len = max([len(str(u)) for u in upper_labels if u]) if upper_labels else 0
             extra_margin_up = max_up_len * 0.013 * x_fs_ratio
-            y_up = -0.015 * x_fs_ratio - extra_margin_up
+            y_up_base = -0.015 * x_fs_ratio - extra_margin_up
             va_up = 'center'
             
-        # single.pyに合わせた y_line (区切り線) の高さ設定
+        y_up = y_up_base - offset_up_user
+        
         if rot_up == 0: 
-            y_line = y_up - 0.075 * x_fs_ratio 
+            y_line_base = y_up_base - 0.075 * x_fs_ratio 
         else:
-            y_line = y_up - extra_margin_up - 0.015 * x_fs_ratio
+            y_line_base = y_up_base - extra_margin_up - 0.015 * x_fs_ratio
             
         for j in range(config['num_targets']):
             for i, uid in enumerate(internal_ids):
@@ -170,16 +186,19 @@ def draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords
                     all_low_labels_clean.append(label)
                     
             rot_low = calc_rotation(all_low_labels_clean, all_xs_low_center, x_lbl_fs, fw, x_span)
+            y_low_base = y_line_base - 0.015 * x_fs_ratio
             va_low = 'top'
-            y_low = y_line - 0.015 * x_fs_ratio
-            
             extra_margin_low = 0
+            
             if rot_low > 0:
                 max_low_len = max([len(str(l)) for l in lower_labels if l]) if lower_labels else 0
                 extra_margin_low = max_low_len * 0.013 * x_fs_ratio
-                y_low = y_line - 0.015 * x_fs_ratio - extra_margin_low
+                y_low_base = y_line_base - 0.015 * x_fs_ratio - extra_margin_low
                 va_low = 'center'
                 
+            y_line = y_line_base - offset_low_user
+            y_low = y_low_base - offset_low_user
+            
             for j in range(config['num_targets']):
                 for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
                     if not label: continue
@@ -188,24 +207,24 @@ def draw_x_labels(ax, config, internal_ids, upper_labels, lower_labels, x_coords
                     if x_start != x_end: ax.plot([x_start - bar_width/2.5, x_end + bar_width/2.5], [y_line, y_line], color='black', lw=1.2, transform=trans, clip_on=False)
                     ax.text((x_start + x_end) / 2, y_low, label, ha='center', va=va_low, rotation=rot_low, transform=trans, fontsize=x_lbl_fs, fontweight='bold', color='black', fontname=get_font(label))
             
-            # ターゲット名を描画する際のベースラインを下段ラベルの下に設定
-            global_lowest_y = y_line - 0.075 * x_fs_ratio if rot_low == 0 else y_low - extra_margin_low - 0.015 * x_fs_ratio
+            global_lowest_y_base = y_low_base - (0.015 * x_fs_ratio if rot_low == 0 else extra_margin_low)
         else:
-            # 下段がない場合は、ターゲット名を描画するベースラインを上段ラベルのすぐ下に引き上げる
-            global_lowest_y = y_line
+            global_lowest_y_base = y_line_base
 
     # --- ターゲット名（最下段）の描画 ---
     if config['num_targets'] > 1:
-        # single.pyの区切り線と同じマージンでターゲット名を配置
-        y_tgt = global_lowest_y - 0.015 * x_fs_ratio
+        y_tgt_line_base = global_lowest_y_base - 0.015 * x_fs_ratio
+        y_tgt_line = y_tgt_line_base - offset_tgt_user
+        y_tgt = y_tgt_line - 0.015 * x_fs_ratio
+        
         for j in range(config['num_targets']):
             xs_target = list(x_coords_multi[j].values())
             if xs_target:
                 x_start, x_end = min(xs_target), max(xs_target)
                 c = (x_start + x_end) / 2
-                ax.plot([x_start - bar_width/2, x_end + bar_width/2], [global_lowest_y, global_lowest_y], color='black', lw=1.5, transform=trans, clip_on=False)
+                ax.plot([x_start - bar_width/2, x_end + bar_width/2], [y_tgt_line, y_tgt_line], color='black', lw=1.5, transform=trans, clip_on=False)
                 ax.text(c, y_tgt, config['target_names'][j], ha='center', va='top', transform=trans, fontsize=x_lbl_fs+2, fontweight='bold', color='black', fontname=get_font(config['target_names'][j]))
-                
+
 def render_microscope_analysis(input_data, config):
     if config.get('svg_font_path', True):
         plt.rcParams['svg.fonttype'] = 'path'
@@ -412,7 +431,15 @@ def render_microscope_analysis(input_data, config):
     if config['num_targets'] == 1 and config['label_style'] == "1段 ＋ 系列名（凡例）":
         handles, labels = ax_main.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        if by_label: ax_main.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold'})
+        if by_label: 
+            leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
+            for lbl in by_label.keys():
+                f_name = get_font(lbl)
+                # ▼ ここに 'Hiragino Sans' を追加！
+                if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
+                    leg_font = f_name
+                    break
+            ax_main.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold', 'family': leg_font})
 
     plt.tight_layout()
     st.pyplot(fig_main)
