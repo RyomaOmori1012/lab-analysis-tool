@@ -14,62 +14,8 @@ import base64
 warnings.filterwarnings('ignore')
 
 from utils import calc_error, run_statistical_test, parse_plate, parse_idx
-
+from plot_utils import get_font, fix_svg_font, embed_state_in_svg, draw_significance_brackets
 import platform
-
-# --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
-plt.rcParams['font.family'] = 'sans-serif'
-
-# 優先順位に Mac用の 'Hiragino Sans' を追加
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
-
-if platform.system() == 'Linux':
-    # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
-    plt.rcParams['mathtext.fontset'] = 'dejavusans'
-else:
-    # ローカル(Windows/Mac)の最高の設定をそのまま維持
-    plt.rcParams['mathtext.fontset'] = 'custom'
-    plt.rcParams['mathtext.rm'] = 'Arial'
-    plt.rcParams['mathtext.it'] = 'Arial:italic'
-    plt.rcParams['mathtext.bf'] = 'Arial:bold'
-
-def get_font(text):
-    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
-    if re.search(r'[^\x00-\x7F]', str(text)):
-        if platform.system() == 'Linux':
-            return 'IPAexGothic'      # URL版
-        elif platform.system() == 'Darwin':
-            return 'Hiragino Sans'    # Mac版（ローカル）
-        else:
-            return 'MS PGothic'       # Windows版（ローカル）
-    else:
-        # 英数字のみの場合は、こだわり設定の英数フォントを返す
-        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
-
-def fix_svg_font(svg_bytes):
-    svg_str = svg_bytes.getvalue().decode('utf-8')
-    # SVG出力時も、Mac用のHiraginoを追加
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
-    return svg_str.encode('utf-8')
-
-def embed_state_in_svg(svg_bytes):
-    try:
-        svg_str = svg_bytes.decode('utf-8')
-        safe_state = {}
-        for k, v in st.session_state.items():
-            if k == "svg_uploader": continue
-            try:
-                json.dumps(v)
-                safe_state[k] = v
-            except:
-                pass
-        json_str = json.dumps(safe_state)
-        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
-        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
-        return svg_str.encode('utf-8')
-    except:
-        return svg_bytes
 
 def render_mtt_bar(input_data, config):
     if config.get('svg_font_path', True):
@@ -98,7 +44,6 @@ def render_mtt_bar(input_data, config):
         
         arr = parse_plate(pd_text)
         
-        # ★ 外れ値マスキング
         exclude_set = config.get('mtt_exclude_map', {}).get(idx, set())
         for r_mask, c_mask in exclude_set:
             val_before = arr[r_mask, c_mask]
@@ -234,7 +179,6 @@ def render_mtt_bar(input_data, config):
         
         ax.set_xticks(x_coords)
         
-        # ★ 日本語フォントを自動判定
         xtick_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
         for lbl in labels:
             f_name = get_font(lbl)
@@ -252,28 +196,15 @@ def render_mtt_bar(input_data, config):
         ax.set_ylabel("Cell Viability [%]", fontsize=config.get('label_fontsize', 16), fontweight='bold', labelpad=8, fontname='Arial')
         
         current_max_y = max([m + e for m, e in zip(means, errs) if not np.isnan(m) and not np.isnan(e)] + [100.0]) if means else 100.0
-        y_shift = current_max_y * 0.15
-        h = current_max_y * 0.025
-        base_bracket_y = current_max_y * 1.10
-        max_element_y = current_max_y
         
-        levels, max_level = [], 0
-        plotted_stars = set()
-        
+        # ★ plot_utils の有意差バー描画を利用
         sig_pairs = []
         for i_idx, j_idx, p in p_pairs:
             if p < 0.05:
                 stars = "***" if p < 0.001 else "**" if p < 0.01 else "*"
                 sig_pairs.append((x_coords[i_idx], x_coords[j_idx], stars))
                 
-        for x_start, x_end, stars in sorted(sig_pairs, key=lambda x: x[1] - x[0]):
-            plotted_stars.add(stars)
-            placed_level = next((l_idx for l_idx, intervals in enumerate(levels) if not any(not (x_end < s or x_start > e) for s, e in intervals)), -1)
-            if placed_level == -1: placed_level = len(levels); levels.append([])
-            levels[placed_level].append((x_start, x_end)); max_level = max(max_level, placed_level)
-            by = base_bracket_y + placed_level * y_shift; max_element_y = max(max_element_y, by + h)
-            ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
-            ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=config.get('tick_fontsize', 14), fontweight='bold', fontname='Arial')
+        max_element_y, plotted_stars = draw_significance_brackets(ax, sig_pairs, current_max_y, config.get('tick_fontsize', 14), text_offset_ratio=0.2)
             
         ax.set_ylim(0, max(current_max_y * 1.2, max_element_y * 1.15))
         
@@ -282,8 +213,7 @@ def render_mtt_bar(input_data, config):
         title_str = f"{test_desc}{star_str}, n={max_n}" if test_desc else f"n={max_n}"
         if not config.get('show_stats', True): title_str = f"n={max_n}"
         
-        # ★ 日本語フォントを自動判定
-        ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
+        ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(title_str))
         
         return fig, p_pairs, test_desc
 
@@ -337,7 +267,6 @@ def render_mtt_bar(input_data, config):
     for i_idx, j_idx, p in p_pairs_int:
         c1 = int_labels[i_idx]
         c2 = int_labels[j_idx]
-        # ▼ 2箇所目：stat_data.append の中身をごっそり入れ替える
         stat_data.append({
             "グラフ": "統合グラフ", 
             "比較": f"{c1} vs {c2}", 
@@ -364,7 +293,6 @@ def render_mtt_bar(input_data, config):
         for i_idx, j_idx, p in p_pairs_indiv:
             c1 = lbls[i_idx]
             c2 = lbls[j_idx]
-            # ▼ 2箇所目：stat_data.append の中身をごっそり入れ替える
             stat_data.append({
                 "グラフ": f"個別 ({res['plate_name']})", 
                 "比較": f"{c1} vs {c2}", 
@@ -392,7 +320,6 @@ def render_mtt_bar(input_data, config):
         df_sum = pd.DataFrame(summary_int)
         df_sum.to_excel(writer, sheet_name='Summary', index=False)
         
-        # ★ Excelへ除外ログを追記
         if excel_exclude_logs:
             ws = writer.book['Summary']
             start_row_log = len(df_sum) + 5
@@ -412,14 +339,12 @@ def render_mtt_bar(input_data, config):
         dl_col1, dl_col2 = st.columns(2)
         buf_c = io.BytesIO()
         fig_int.savefig(buf_c, format='svg', bbox_inches='tight')
-        fixed_svg_c = fix_svg_font(buf_c)
-        final_svg_c = embed_state_in_svg(fixed_svg_c)
+        final_svg_c = embed_state_in_svg(fix_svg_font(buf_c))
         with dl_col1: st.download_button("📥 統合棒グラフ(SVG)を保存", final_svg_c, "Transfection_Integrated_Bar.svg", "image/svg+xml", use_container_width=True)
             
     with st.expander("個別プレートの棒グラフ(SVG)をダウンロード"):
         for p_name, f in indiv_figs:
             buf_i = io.BytesIO()
             f.savefig(buf_i, format='svg', bbox_inches='tight')
-            fixed_svg_i = fix_svg_font(buf_i)
-            final_svg_i = embed_state_in_svg(fixed_svg_i)
+            final_svg_i = embed_state_in_svg(fix_svg_font(buf_i))
             st.download_button(f"📥 {p_name} の棒グラフ", final_svg_i, f"{p_name}_Transfection_Bar.svg", "image/svg+xml")

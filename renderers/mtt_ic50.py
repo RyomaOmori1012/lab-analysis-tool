@@ -16,62 +16,8 @@ import base64
 warnings.filterwarnings('ignore')
 
 from utils import calc_error, parse_plate, parse_idx
-
+from plot_utils import get_font, fix_svg_font, embed_state_in_svg
 import platform
-
-# --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
-plt.rcParams['font.family'] = 'sans-serif'
-
-# 優先順位に Mac用の 'Hiragino Sans' を追加
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
-
-if platform.system() == 'Linux':
-    # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
-    plt.rcParams['mathtext.fontset'] = 'dejavusans'
-else:
-    # ローカル(Windows/Mac)の最高の設定をそのまま維持
-    plt.rcParams['mathtext.fontset'] = 'custom'
-    plt.rcParams['mathtext.rm'] = 'Arial'
-    plt.rcParams['mathtext.it'] = 'Arial:italic'
-    plt.rcParams['mathtext.bf'] = 'Arial:bold'
-
-def get_font(text):
-    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
-    if re.search(r'[^\x00-\x7F]', str(text)):
-        if platform.system() == 'Linux':
-            return 'IPAexGothic'      # URL版
-        elif platform.system() == 'Darwin':
-            return 'Hiragino Sans'    # Mac版（ローカル）
-        else:
-            return 'MS PGothic'       # Windows版（ローカル）
-    else:
-        # 英数字のみの場合は、こだわり設定の英数フォントを返す
-        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
-
-def fix_svg_font(svg_bytes):
-    svg_str = svg_bytes.getvalue().decode('utf-8')
-    # SVG出力時も、Mac用のHiraginoを追加
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
-    return svg_str.encode('utf-8')
-
-def embed_state_in_svg(svg_bytes):
-    try:
-        svg_str = svg_bytes.decode('utf-8')
-        safe_state = {}
-        for k, v in st.session_state.items():
-            if k == "svg_uploader": continue
-            try:
-                json.dumps(v)
-                safe_state[k] = v
-            except:
-                pass
-        json_str = json.dumps(safe_state)
-        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
-        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
-        return svg_str.encode('utf-8')
-    except:
-        return svg_bytes
 
 def prism_4pl(x_log, bottom, top, log_ic50, hill_slope):
     return bottom + (top - bottom) / (1 + 10**((x_log - log_ic50) * hill_slope))
@@ -104,7 +50,6 @@ def render_mtt_ic50(input_data, config):
         
         arr = parse_plate(pd_text); plate_names.append(pn or f"Plate {idx+1}")
         
-        # 外れ値マスキング
         exclude_set = config.get('mtt_exclude_map', {}).get(idx, set())
         for r_mask, c_mask in exclude_set:
             val_before = arr[r_mask, c_mask]
@@ -153,7 +98,7 @@ def render_mtt_ic50(input_data, config):
         
         x_fit_log = []
         y_fit = []
-        sigma_fit = []  # ★ 重み付け（Weighting）用の配列を追加
+        sigma_fit = []
         
         ctrl_log_c = np.nan
         gap_val = config.get('ic50_ctrl_gap', 1.0)
@@ -162,21 +107,19 @@ def render_mtt_ic50(input_data, config):
             min_log_c = np.log10(min([x for x in conc_vals_plot if x > 0]))
             ctrl_log_c = min_log_c - gap_val
                             
-        # サンプルデータ（実際の濃度）を学習配列・重み配列に格納
         for idx_c, col in enumerate(s_cols_plot):
             log_c = np.log10(conc_vals_plot[idx_c])
             vals = plates_data[i][valid_rows, col]
             clean_vals = [v for v in vals if not np.isnan(v)]
             
-            # ★ 濃度ごとのばらつき(標準偏差)を計算して重みとする
             sd = np.std(clean_vals, ddof=1) if len(clean_vals) > 1 else np.nan
             if np.isnan(sd) or sd == 0:
-                sd = 1.0  # SDが計算できない場合は平等に扱う
+                sd = 1.0  
                 
             for v in clean_vals:
                 x_fit_log.append(log_c)
                 y_fit.append(v)
-                sigma_fit.append(sd)  # 誤差が大きいデータほど信頼度を下げる
+                sigma_fit.append(sd)  
                     
         popt = None
         r2 = np.nan
@@ -192,7 +135,6 @@ def render_mtt_ic50(input_data, config):
                 else:
                     bounds = ([-20.0, 80.0, -np.inf, 0.01], [50.0, 120.0, np.inf, 10.0])
                     
-                # ★ curve_fit に sigma 配列を渡し、重み付き最小二乗法を実行
                 popt, pcov = curve_fit(prism_4pl, x_fit_log, y_fit, p0=p0, bounds=bounds, sigma=sigma_fit, absolute_sigma=False, maxfev=10000)
                 ic50_val = 10**popt[2]
                 y_pred = prism_4pl(np.array(x_fit_log), *popt)
@@ -230,7 +172,6 @@ def render_mtt_ic50(input_data, config):
                 "Log(IC50)": "N/A"
             })
         
-        # グラフのプロットにはControl(濃度0)の表示を含める
         x_plot_actual = [10**ctrl_log_c] + list(conc_vals_plot)
         means_plot = [100.0] + means_i
         errs_plot = [ctrl_err_pct_list[i]] + errs_i
@@ -287,7 +228,7 @@ def render_mtt_ic50(input_data, config):
             title_prefix = f"IC50 {display_ic50_str}" if ">" in display_ic50_str else f"IC50 = {display_ic50_str}"
             title_str = f"{title_prefix} {config['mtt_unit']} (R²={r2:.3f}), " + title_str
             
-        ax_i.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
+        ax_i.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(title_str))
         indiv_figs.append((plate_names[i], fig_i))
 
     # --- 統合グラフの描画 ---
@@ -363,7 +304,6 @@ def render_mtt_ic50(input_data, config):
         leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
         for p_name in plate_names:
             f_name = get_font(p_name)
-            # ▼ ここに 'Hiragino Sans' を追加！
             if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
                 leg_font = f_name
                 break
@@ -374,7 +314,7 @@ def render_mtt_ic50(input_data, config):
     if config.get('show_stats', True): title_str = f"n={max_n}"
     else: title_str = f"n={max_n}"
     
-    ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
+    ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(title_str))
 
     st.pyplot(fig_comb)
     
@@ -467,8 +407,7 @@ def render_mtt_ic50(input_data, config):
     dl_col1, dl_col2 = st.columns(2)
     buf_c = io.BytesIO()
     fig_comb.savefig(buf_c, format='svg', bbox_inches='tight')
-    fixed_svg_c = fix_svg_font(buf_c)
-    final_svg_c = embed_state_in_svg(fixed_svg_c)
+    final_svg_c = embed_state_in_svg(fix_svg_font(buf_c))
     
     with dl_col1: st.download_button("📥 統合グラフ(SVG)を保存", final_svg_c, "Combined_IC50_Graph.svg", "image/svg+xml", use_container_width=True)
         
@@ -476,6 +415,5 @@ def render_mtt_ic50(input_data, config):
         for p_name, f in indiv_figs:
             buf_i = io.BytesIO()
             f.savefig(buf_i, format='svg', bbox_inches='tight')
-            fixed_svg_i = fix_svg_font(buf_i)
-            final_svg_i = embed_state_in_svg(fixed_svg_i)
+            final_svg_i = embed_state_in_svg(fix_svg_font(buf_i))
             st.download_button(f"📥 {p_name} のグラフ", final_svg_i, f"{p_name}_IC50_Graph.svg", "image/svg+xml")

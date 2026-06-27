@@ -2,76 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import japanize_matplotlib
 import matplotlib.transforms as transforms
 import matplotlib.ticker as ticker
 import itertools
 import io
-import re
 import warnings
 import unicodedata
-import json
-import base64
 
 warnings.filterwarnings('ignore')
 
 from utils import calc_error, run_statistical_test, parse_text
-
-import platform
-
-# --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
-plt.rcParams['font.family'] = 'sans-serif'
-
-# 優先順位に Mac用の 'Hiragino Sans' を追加
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
-
-if platform.system() == 'Linux':
-    # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
-    plt.rcParams['mathtext.fontset'] = 'dejavusans'
-else:
-    # ローカル(Windows/Mac)の最高の設定をそのまま維持
-    plt.rcParams['mathtext.fontset'] = 'custom'
-    plt.rcParams['mathtext.rm'] = 'Arial'
-    plt.rcParams['mathtext.it'] = 'Arial:italic'
-    plt.rcParams['mathtext.bf'] = 'Arial:bold'
-
-def get_font(text):
-    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
-    if re.search(r'[^\x00-\x7F]', str(text)):
-        if platform.system() == 'Linux':
-            return 'IPAexGothic'      # URL版
-        elif platform.system() == 'Darwin':
-            return 'Hiragino Sans'    # Mac版（ローカル）
-        else:
-            return 'MS PGothic'       # Windows版（ローカル）
-    else:
-        # 英数字のみの場合は、こだわり設定の英数フォントを返す
-        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
-
-def fix_svg_font(svg_bytes):
-    svg_str = svg_bytes.getvalue().decode('utf-8')
-    # SVG出力時も、Mac用のHiraginoを追加
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
-    return svg_str.encode('utf-8')
-
-def embed_state_in_svg(svg_bytes):
-    try:
-        svg_str = svg_bytes.decode('utf-8')
-        safe_state = {}
-        for k, v in st.session_state.items():
-            if k == "svg_uploader": continue
-            try:
-                json.dumps(v)
-                safe_state[k] = v
-            except:
-                pass
-        json_str = json.dumps(safe_state)
-        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
-        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
-        return svg_str.encode('utf-8')
-    except:
-        return svg_bytes
+from plot_utils import get_font, fix_svg_font, embed_state_in_svg, draw_significance_brackets
 
 def calc_rotation(labels, xs, font_size, fig_width, x_span):
     if len(xs) < 2 or not labels or len(xs) != len(labels): return 0
@@ -100,16 +41,12 @@ def calc_rotation(labels, xs, font_size, fig_width, x_span):
     return 0
 
 def render_single_target(input_data, config):
-    if config.get('svg_font_path', True):
-        plt.rcParams['svg.fonttype'] = 'path'
-    else:
-        plt.rcParams['svg.fonttype'] = 'none'
+    if config.get('svg_font_path', True): plt.rcParams['svg.fonttype'] = 'path'
+    else: plt.rcParams['svg.fonttype'] = 'none'
 
     upper_labels, lower_labels, internal_ids, raw_processed = [], [], [], {}
     dropped_warnings, non_param_warnings, exclude_flags = set(), set(), []
-    
-    raw_target_data = {}
-    raw_loading_data = {}
+    raw_target_data, raw_loading_data = {}, {}
     
     for idx, item in enumerate(input_data):
         u, d, val_t_list, val_l_list = item[0], item[1], item[2], item[3] if len(item) > 3 else []
@@ -184,8 +121,7 @@ def render_single_target(input_data, config):
         palette = {u: "black" for u in unique_up}
     
     x_coords, bar_width = {}, config['bar_width']
-    bar_gap = config.get('bar_gap', 0.02)
-    group_gap = config.get('group_gap', 0.50)
+    bar_gap, group_gap = config.get('bar_gap', 0.02), config.get('group_gap', 0.50)
     
     if config['layout_mode'] == "条件ごとにグループ化":
         current_x = 0
@@ -193,10 +129,8 @@ def render_single_target(input_data, config):
             members = [i for i, l in enumerate(lower_labels) if l == low]
             for idx_m, i in enumerate(members):
                 x_coords[internal_ids[i]] = current_x
-                if idx_m < len(members) - 1:
-                    current_x += bar_width + bar_gap
-                else:
-                    current_x += bar_width + group_gap
+                if idx_m < len(members) - 1: current_x += bar_width + bar_gap
+                else: current_x += bar_width + group_gap
     else:
         current_x = 0
         for i, uid in enumerate(internal_ids): 
@@ -212,10 +146,7 @@ def render_single_target(input_data, config):
     else:
         x_span = 1.0
 
-    fw = config.get('fig_width', 0.0)
-    if fw <= 0:
-        fw = max(4.0, len(internal_ids) * 0.8 + x_span * 1.0)
-        
+    fw = max(4.0, len(internal_ids) * 0.8 + x_span * 1.0) if config.get('fig_width', 0.0) <= 0 else config['fig_width']
     fig_h = config.get('fig_height', 5.0)
     fig, ax = plt.subplots(figsize=(fw, fig_h))
     fig.patch.set_facecolor('white'); ax.set_facecolor('white')
@@ -236,22 +167,17 @@ def render_single_target(input_data, config):
     ax.tick_params(axis='x', bottom=False, top=False); ax.set_xticklabels([]) 
     trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
     
-    offset_up_user = config.get('offset_up', 0.0)
-    offset_low_user = config.get('offset_low', 0.0)
+    offset_up_user, offset_low_user = config.get('offset_up', 0.0), config.get('offset_low', 0.0)
 
     if config['label_style'] == "1段 ＋ 系列名（凡例）":
-        xs_low = []
-        lbls_low = []
+        xs_low, lbls_low = [], []
         for low in unique_low:
             xs_t = [x_coords[internal_ids[i]] for i, l in enumerate(lower_labels) if l == low]
-            if xs_t: 
-                xs_low.append(sum(xs_t)/len(xs_t))
-                lbls_low.append(low)
+            if xs_t: xs_low.append(sum(xs_t)/len(xs_t)); lbls_low.append(low)
         rot = calc_rotation(lbls_low, xs_low, x_lbl_fs, fw, x_span)
         
         y_pos_base = -0.015 * x_fs_ratio
-        va_val = 'top'
-        extra_margin = 0
+        va_val, extra_margin = 'top', 0
         if rot > 0:
             max_len = max([len(str(l)) for l in unique_low if l]) if unique_low else 0
             extra_margin = max_len * 0.013 * x_fs_ratio
@@ -267,8 +193,7 @@ def render_single_target(input_data, config):
         rot_up = calc_rotation(upper_labels, xs_up, x_lbl_fs, fw, x_span)
         
         y_up_base = -0.015 * x_fs_ratio
-        va_up = 'top'
-        extra_margin_up = 0
+        va_up, extra_margin_up = 'top', 0
         if rot_up > 0:
             max_up_len = max([len(str(u)) for u in upper_labels if u]) if upper_labels else 0
             extra_margin_up = max_up_len * 0.013 * x_fs_ratio
@@ -276,17 +201,12 @@ def render_single_target(input_data, config):
             va_up = 'center'
             
         y_up = y_up_base - offset_up_user
-        
-        if rot_up == 0: 
-            y_line_base = y_up_base - 0.075 * x_fs_ratio 
-        else:
-            y_line_base = y_up_base - extra_margin_up - 0.015 * x_fs_ratio
+        y_line_base = y_up_base - 0.075 * x_fs_ratio if rot_up == 0 else y_up_base - extra_margin_up - 0.015 * x_fs_ratio
         
         for i, uid in enumerate(internal_ids):
             ax.text(x_coords[uid], y_up, upper_labels[i], ha='center', va=va_up, rotation=rot_up, transform=trans, fontsize=x_lbl_fs, color='black', fontweight='bold', fontname=get_font(upper_labels[i]))
             
-        xs_low_center = []
-        low_labels_clean = []
+        xs_low_center, low_labels_clean = [], []
         for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
             if not label: continue
             xs = [x_coords[internal_ids[x[0]]] for x in elements]
@@ -294,10 +214,7 @@ def render_single_target(input_data, config):
             low_labels_clean.append(label)
             
         rot_low = calc_rotation(low_labels_clean, xs_low_center, x_lbl_fs, fw, x_span)
-        
-        y_low_base = y_line_base - 0.015 * x_fs_ratio
-        va_low = 'top'
-        extra_margin_low = 0
+        y_low_base, va_low, extra_margin_low = y_line_base - 0.015 * x_fs_ratio, 'top', 0
         
         if rot_low > 0:
             max_low_len = max([len(str(l)) for l in lower_labels if l]) if lower_labels else 0
@@ -305,8 +222,7 @@ def render_single_target(input_data, config):
             y_low_base = y_line_base - 0.015 * x_fs_ratio - extra_margin_low
             va_low = 'center'
             
-        y_line = y_line_base - offset_low_user
-        y_low = y_low_base - offset_low_user
+        y_line, y_low = y_line_base - offset_low_user, y_low_base - offset_low_user
         
         for label, elements in [(k, list(g)) for k, g in itertools.groupby(enumerate(lower_labels), key=lambda x: x[1])]:
             if not label: continue
@@ -322,31 +238,17 @@ def render_single_target(input_data, config):
         if not np.isnan(m) and not np.isnan(e): current_max_y = max(current_max_y, m + e)
     if current_max_y == 0: current_max_y = 1.0
     
-    y_shift, h, base_bracket_y, max_element_y = current_max_y * 0.15, current_max_y * 0.025, current_max_y * 1.10, current_max_y
-    levels, max_level, sig_pairs, plotted_stars = [], 0, [], set()
-    
+    sig_pairs = []
     for u1, u2, p in p_pairs:
         if p >= 0.05 or np.isnan(p) or u1 not in x_coords or u2 not in x_coords: continue
         sig_pairs.append((min(x_coords[u1], x_coords[u2]), max(x_coords[u1], x_coords[u2]), "***" if p < 0.001 else "**" if p < 0.01 else "*"))
     
-    for x_start, x_end, stars in sorted(sig_pairs, key=lambda x: x[1] - x[0]):
-        plotted_stars.add(stars)
-        placed_level = next((l_idx for l_idx, intervals in enumerate(levels) if not any(not (x_end < s or x_start > e) for s, e in intervals)), -1)
-        if placed_level == -1: placed_level = len(levels); levels.append([])
-        levels[placed_level].append((x_start, x_end)); max_level = max(max_level, placed_level)
-        by = base_bracket_y + placed_level * y_shift; max_element_y = max(max_element_y, by + h)
-        ax.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
-        ax.text((x_start + x_end) / 2, by + h*0.2, stars, ha='center', va='bottom', color='black', fontsize=base_fs, fontweight='bold')
+    max_element_y, plotted_stars = draw_significance_brackets(ax, sig_pairs, current_max_y, base_fs)
 
     ax.set_ylim(0, max(current_max_y * 1.2, max_element_y * 1.15))
-    
-    if config.get('y_tick_interval', 0) > 0:
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
-    else:
-        ax.yaxis.set_major_locator(ticker.AutoLocator())
-        
-    if x_vals: 
-        ax.set_xlim(x_min_val, x_max_val)
+    if config.get('y_tick_interval', 0) > 0: ax.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
+    else: ax.yaxis.set_major_locator(ticker.AutoLocator())
+    if x_vals: ax.set_xlim(x_min_val, x_max_val)
         
     ax.set_ylabel(config['ylabel_input'], fontsize=config.get('label_fontsize', 16), fontweight="bold", color='black', labelpad=10, fontname=get_font(config['ylabel_input']))
     
@@ -354,13 +256,11 @@ def render_single_target(input_data, config):
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         if by_label: 
+            import platform
             leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
             for lbl in by_label.keys():
                 f_name = get_font(lbl)
-                # ▼ ここに 'Hiragino Sans' を追加！
-                if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
-                    leg_font = f_name
-                    break
+                if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']: leg_font = f_name; break
             ax.legend(by_label.values(), by_label.keys(), loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 12), 'weight': 'bold', 'family': leg_font})
 
     n_list = [len([v for v in raw_processed[u] if not np.isnan(v)]) for u in internal_ids]
@@ -369,7 +269,7 @@ def render_single_target(input_data, config):
     title_str = f"{test_desc_flat}{star_str}, n={expected_n}" if test_desc_flat else f"n={expected_n}"
     
     if not config.get('show_stats', True): title_str = f"n={expected_n}"
-    if title_str: ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
+    if title_str: ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(title_str))
 
     st.pyplot(fig)
     
@@ -383,18 +283,13 @@ def render_single_target(input_data, config):
         detailed_rows = []
         for i, uid in enumerate(internal_ids):
             c_title = f"{upper_labels[i]} ({lower_labels[i]})" if lower_labels[i] else upper_labels[i]
-            t_list = raw_target_data.get(uid, [])
-            l_list = raw_loading_data.get(uid, [])
-            proc_list = raw_processed.get(uid, [])
-            norm_list = final_norm.get(uid, [])
+            t_list, l_list, proc_list, norm_list = raw_target_data.get(uid, []), raw_loading_data.get(uid, []), raw_processed.get(uid, []), final_norm.get(uid, [])
             
-            max_len = max(len(t_list), len(l_list), len(proc_list), len(norm_list))
-            for r_idx in range(max_len):
+            for r_idx in range(max(len(t_list), len(l_list), len(proc_list), len(norm_list))):
                 row_dict = {"条件名": c_title}
                 row_dict["生データ (Target)"] = t_list[r_idx] if r_idx < len(t_list) else np.nan
                 row_dict["生データ (Loading Control)"] = l_list[r_idx] if r_idx < len(l_list) else np.nan
-                calc_name = "計算過程 (Target - Loading)" if config['is_qpcr'] else "計算過程 (Target / Loading)"
-                row_dict[calc_name] = proc_list[r_idx] if r_idx < len(proc_list) else np.nan
+                row_dict["計算過程 (Target - Loading)" if config['is_qpcr'] else "計算過程 (Target / Loading)"] = proc_list[r_idx] if r_idx < len(proc_list) else np.nan
                 row_dict["正規化後データ"] = norm_list[r_idx] if r_idx < len(norm_list) else np.nan
                 detailed_rows.append(row_dict)
         pd.DataFrame(detailed_rows).to_excel(writer, sheet_name='Detailed_Data', index=False)
@@ -405,15 +300,12 @@ def render_single_target(input_data, config):
             c1 = f"{upper_labels[idx1]} ({lower_labels[idx1]})" if lower_labels[idx1] else upper_labels[idx1]
             c2 = f"{upper_labels[idx2]} ({lower_labels[idx2]})" if lower_labels[idx2] else upper_labels[idx2]
             stat_data.append({
-                "比較": f"{c1} vs {c2}", 
-                "p値": p if not np.isnan(p) else "N/A", 
+                "比較": f"{c1} vs {c2}", "p値": p if not np.isnan(p) else "N/A", 
                 "判定": "***" if p<0.001 else "**" if p<0.01 else "*" if p<0.05 else "ns" if not np.isnan(p) else "N/A",
-                "検定手法": test_desc_flat,
-                "検定の前提": "ノンパラメトリック" if config.get('is_non_param') else "パラメトリック",
+                "検定手法": test_desc_flat, "検定の前提": "ノンパラメトリック" if config.get('is_non_param') else "パラメトリック",
                 "対応の有無": "対応あり" if config.get('is_paired') else "対応なし",
                 "多重比較": "Controlとの比較" if config.get('is_vs_control') else "全ペア総当たり",
-                "エラーバー": config.get('error_bar_type', '設定なし'),
-                "正規化": config.get('norm_mode', '設定なし')
+                "エラーバー": config.get('error_bar_type', '設定なし'), "正規化": config.get('norm_mode', '設定なし')
             })
         if stat_data: pd.DataFrame(stat_data).to_excel(writer, sheet_name='Statistical_Details', index=False)
 
@@ -435,24 +327,12 @@ def render_single_target(input_data, config):
                 
                 matrix_mean.to_excel(writer, sheet_name='Summary_Matrix', startrow=1, startcol=0)
                 matrix_sd.to_excel(writer, sheet_name='Summary_Matrix', startrow=len(unique_up)+4, startcol=0)
-                
-                ws_mat = writer.book['Summary_Matrix']
-                ws_mat.cell(row=1, column=1, value="【平均値 (Mean)】")
-                ws_mat.cell(row=len(unique_up)+4, column=1, value=f"【{err_label}】")
-                
-                sc_mat = len(unique_low) + 3
-                ws_mat.cell(row=2, column=sc_mat, value="💡 【グループ化棒グラフの最短作成手順】")
-                ws_mat.cell(row=3, column=sc_mat, value="1. 左上の【平均値】の表(A2から)を丸ごと選択し、[挿入] ＞ [2D 縦棒 (集合縦棒)] をクリック。")
-                ws_mat.cell(row=4, column=sc_mat, value="2. 追加された棒をクリックし、[誤差範囲] ＞ [その他の誤差範囲オプション] ＞ [カスタム]")
-                ws_mat.cell(row=5, column=sc_mat, value=f"3. 値の指定で、下の【{err_label}】の表の該当する行をドラッグして指定すれば完成です！")
-        except Exception:
-            pass
+        except Exception: pass
 
     col_dl1, col_dl2 = st.columns(2)
     buf_svg = io.BytesIO()
     fig.savefig(buf_svg, format='svg', bbox_inches='tight')
-    fixed_svg = fix_svg_font(buf_svg)
-    final_svg = embed_state_in_svg(fixed_svg)
+    final_svg = embed_state_in_svg(fix_svg_font(buf_svg))
     
     with col_dl1: st.download_button("📥 Excelデータをダウンロード", excel_buffer.getvalue(), "Analysis_Data.xlsx", type="primary", use_container_width=True)
     with col_dl2: st.download_button("📥 完成グラフ(SVG)を保存", final_svg, "Graph.svg", "image/svg+xml", use_container_width=True)

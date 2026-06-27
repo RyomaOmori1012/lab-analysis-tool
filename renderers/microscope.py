@@ -17,62 +17,7 @@ import base64
 warnings.filterwarnings('ignore')
 
 from utils import calc_error, run_statistical_test
-
-import platform
-
-# --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
-plt.rcParams['font.family'] = 'sans-serif'
-
-# 優先順位に Mac用の 'Hiragino Sans' を追加
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
-
-if platform.system() == 'Linux':
-    # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
-    plt.rcParams['mathtext.fontset'] = 'dejavusans'
-else:
-    # ローカル(Windows/Mac)の最高の設定をそのまま維持
-    plt.rcParams['mathtext.fontset'] = 'custom'
-    plt.rcParams['mathtext.rm'] = 'Arial'
-    plt.rcParams['mathtext.it'] = 'Arial:italic'
-    plt.rcParams['mathtext.bf'] = 'Arial:bold'
-
-def get_font(text):
-    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
-    if re.search(r'[^\x00-\x7F]', str(text)):
-        if platform.system() == 'Linux':
-            return 'IPAexGothic'      # URL版
-        elif platform.system() == 'Darwin':
-            return 'Hiragino Sans'    # Mac版（ローカル）
-        else:
-            return 'MS PGothic'       # Windows版（ローカル）
-    else:
-        # 英数字のみの場合は、こだわり設定の英数フォントを返す
-        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
-
-def fix_svg_font(svg_bytes):
-    svg_str = svg_bytes.getvalue().decode('utf-8')
-    # SVG出力時も、Mac用のHiraginoを追加
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
-    return svg_str.encode('utf-8')
-
-def embed_state_in_svg(svg_bytes):
-    try:
-        svg_str = svg_bytes.decode('utf-8')
-        safe_state = {}
-        for k, v in st.session_state.items():
-            if k == "svg_uploader": continue
-            try:
-                json.dumps(v)
-                safe_state[k] = v
-            except:
-                pass
-        json_str = json.dumps(safe_state)
-        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
-        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
-        return svg_str.encode('utf-8')
-    except:
-        return svg_bytes
+from plot_utils import get_font, fix_svg_font, embed_state_in_svg, draw_significance_brackets
 
 def calc_rotation(labels, xs, font_size, fig_width, x_span):
     if len(xs) < 2 or not labels or len(xs) != len(labels): return 0
@@ -395,27 +340,16 @@ def render_microscope_analysis(input_data, config):
     for j in range(config['num_targets']):
         for uid in internal_ids:
             m, e = np.nanmean(final_norm_multi[j][uid]), calc_error(final_norm_multi[j][uid], config['error_bar_type'])
-            if not np.isnan(m) and not np.isnan(e): max(current_max_y, m + e)
+            if not np.isnan(m) and not np.isnan(e): current_max_y = max(current_max_y, m + e)
     
-    y_shift, h = current_max_y * 0.15, current_max_y * 0.025
-    global_base_bracket_y = current_max_y * 1.10
-    max_element_y = current_max_y
-    plotted_stars = set()
+    # ★ plot_utils の有意差バー描画を利用
+    sig_pairs_all = []
     for j in range(config['num_targets']):
-        levels, max_level, sig_pairs = [], 0, []
-        base_bracket_y = global_base_bracket_y
         for u1, u2, p in p_pairs_multi[j]:
             if p >= 0.05 or np.isnan(p): continue
-            sig_pairs.append((min(x_coords_multi[j][u1], x_coords_multi[j][u2]), max(x_coords_multi[j][u1], x_coords_multi[j][u2]), "***" if p < 0.001 else "**" if p < 0.01 else "*"))
-        for x_start, x_end, stars in sorted(sig_pairs, key=lambda x: x[1] - x[0]):
-            plotted_stars.add(stars)
-            placed_level = next((l_idx for l_idx, intervals in enumerate(levels) if not any(not (x_end < s or x_start > e) for s, e in intervals)), -1)
-            if placed_level == -1: placed_level = len(levels); levels.append([])
-            levels[placed_level].append((x_start, x_end)); max_level = max(max_level, placed_level)
-            by = base_bracket_y + placed_level * y_shift; max_element_y = max(max_element_y, by + h)
-            ax_main.plot([x_start, x_start, x_end, x_end], [by - h, by, by, by - h], color='black', lw=1.2)
-            ax_main.text((x_start + x_end) / 2, by, stars, ha='center', va='bottom', color='black', fontsize=base_fs, fontweight='bold')
-       
+            sig_pairs_all.append((min(x_coords_multi[j][u1], x_coords_multi[j][u2]), max(x_coords_multi[j][u1], x_coords_multi[j][u2]), "***" if p < 0.001 else "**" if p < 0.01 else "*"))
+    
+    max_element_y, plotted_stars = draw_significance_brackets(ax_main, sig_pairs_all, current_max_y, base_fs, text_offset_ratio=0.0)
 
     ax_main.set_ylim(0, max(current_max_y * 1.2, max_element_y * 1.15))
     ax_main.set_xlim(x_min_val, x_max_val)
@@ -425,17 +359,16 @@ def render_microscope_analysis(input_data, config):
     expected_n = n_list[0] if n_list and len(set(n_list)) == 1 else "varies"
     star_str = ", " + ", ".join([f"{s} p < {0.05 if s=='*' else 0.01 if s=='**' else 0.001}" for s in ["*", "**", "***"] if s in plotted_stars]) if plotted_stars else ""
     
-    # ★ 修正: タイトルから「Well」という言葉を削除
-    ax_main.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(test_desc_flat))
+    ax_main.set_title(f"{test_desc_flat}{star_str}, n={expected_n}", fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(test_desc_flat))
 
     if config['num_targets'] == 1 and config['label_style'] == "1段 ＋ 系列名（凡例）":
         handles, labels = ax_main.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         if by_label: 
+            import platform
             leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
             for lbl in by_label.keys():
                 f_name = get_font(lbl)
-                # ▼ ここに 'Hiragino Sans' を追加！
                 if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
                     leg_font = f_name
                     break
@@ -538,12 +471,10 @@ def render_microscope_analysis(input_data, config):
 
     col_dl1, col_dl2, col_dl3 = st.columns(3)
     
-    # 棒グラフ用SVG
     buf_main = io.BytesIO()
     fig_main.savefig(buf_main, format='svg', bbox_inches='tight')
     final_svg_main = embed_state_in_svg(fix_svg_font(buf_main))
 
-    # 箱ひげ図用SVG
     buf_supp = io.BytesIO()
     fig_supp.savefig(buf_supp, format='svg', bbox_inches='tight')
     final_svg_supp = embed_state_in_svg(fix_svg_font(buf_supp))

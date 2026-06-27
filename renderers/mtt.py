@@ -9,76 +9,16 @@ import io
 import re
 import warnings
 import unicodedata
-import json
-import base64
-
 
 warnings.filterwarnings('ignore')
 
 from utils import calc_error, run_statistical_test, parse_plate, parse_idx
-
+from plot_utils import get_font, fix_svg_font, embed_state_in_svg
 import platform 
 
-# --- フォントのグローバル設定（ローカルのこだわり維持 ＋ サーバー対策） ---
-plt.rcParams['font.family'] = 'sans-serif'
-
-# 優先順位に Mac用の 'Hiragino Sans' を追加
-plt.rcParams['font.sans-serif'] = ['Arial', 'Liberation Sans', 'Hiragino Sans', 'MS PGothic', 'IPAexGothic', 'sans-serif']
-
-if platform.system() == 'Linux':
-    # URL版(Linux)のみ：Arialがないことによる数式エラーを防ぐ最低限の設定
-    plt.rcParams['mathtext.fontset'] = 'dejavusans'
-else:
-    # ローカル(Windows/Mac)の最高の設定をそのまま維持
-    plt.rcParams['mathtext.fontset'] = 'custom'
-    plt.rcParams['mathtext.rm'] = 'Arial'
-    plt.rcParams['mathtext.it'] = 'Arial:italic'
-    plt.rcParams['mathtext.bf'] = 'Arial:bold'
-
-def get_font(text):
-    # テキスト内に1文字でも「日本語（全角文字）」が含まれているか判定する
-    if re.search(r'[^\x00-\x7F]', str(text)):
-        if platform.system() == 'Linux':
-            return 'IPAexGothic'      # URL版
-        elif platform.system() == 'Darwin':
-            return 'Hiragino Sans'    # Mac版（ローカル）
-        else:
-            return 'MS PGothic'       # Windows版（ローカル）
-    else:
-        # 英数字のみの場合は、こだわり設定の英数フォントを返す
-        return 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
-
-def fix_svg_font(svg_bytes):
-    svg_str = svg_bytes.getvalue().decode('utf-8')
-    # SVG出力時も、Mac用のHiraginoを追加
-    svg_str = re.sub(r'font-family:[^;"]+', 'font-family: Arial, "Liberation Sans", "Hiragino Sans", "MS PGothic", "IPAexGothic", sans-serif', svg_str)
-    return svg_str.encode('utf-8')
-
-# --- ★ SVGの裏側に全設定とデータを埋め込む魔法の関数 ---
-def embed_state_in_svg(svg_bytes):
-    try:
-        svg_str = svg_bytes.decode('utf-8')
-        safe_state = {}
-        for k, v in st.session_state.items():
-            if k == "svg_uploader": continue
-            try:
-                json.dumps(v)
-                safe_state[k] = v
-            except:
-                pass
-        json_str = json.dumps(safe_state)
-        b64_str = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-        metadata = f'<metadata id="app-state-data">{b64_str}</metadata>'
-        svg_str = svg_str.replace('</svg>', f'\n{metadata}\n</svg>')
-        return svg_str.encode('utf-8')
-    except:
-        return svg_bytes
-
 def render_mtt_analysis(input_data, config):
-    if config.get('svg_font_path', True):
-        plt.rcParams['svg.fonttype'] = 'path'
-    else:
-        plt.rcParams['svg.fonttype'] = 'none'
+    if config.get('svg_font_path', True): plt.rcParams['svg.fonttype'] = 'path'
+    else: plt.rcParams['svg.fonttype'] = 'none'
 
     i_rows, i_cols = parse_idx(config['mtt_ignore_row'], True), parse_idx(config['mtt_ignore_col'], False)
     b_cols, c_cols, s_cols = parse_idx(config['mtt_blank_col'], False), parse_idx(config['mtt_control_col'], False), parse_idx(config['mtt_sample_cols'], False)
@@ -90,10 +30,7 @@ def render_mtt_analysis(input_data, config):
     s_cols_plot = s_cols[::-1] if "左が高濃度" in config['mtt_conc_direction'] else s_cols
     
     plates_data, plate_names, ctrl_err_pct_list = [], [], []
-    exclude_flags = []
-    
-    raw_plates, blank_means, ctrl_means = [], [], []
-    excel_exclude_logs = []
+    exclude_flags, raw_plates, blank_means, ctrl_means, excel_exclude_logs = [], [], [], [], []
     
     for idx, item in enumerate(input_data):
         pn, pd_text = item[0], item[1]
@@ -102,7 +39,6 @@ def render_mtt_analysis(input_data, config):
         
         arr = parse_plate(pd_text); plate_names.append(pn or f"Plate {idx+1}")
         
-        # ★ 外れ値マスキング
         exclude_set = config.get('mtt_exclude_map', {}).get(idx, set())
         for r_mask, c_mask in exclude_set:
             val_before = arr[r_mask, c_mask]
@@ -128,11 +64,9 @@ def render_mtt_analysis(input_data, config):
     num_p = len(plates_data)
     indiv_figs = []
     
-    fw_i = config.get('fig_width', 0.0)
-    fw_i = 6.0 if fw_i <= 0 else fw_i
+    fw_i = 6.0 if config.get('fig_width', 0.0) <= 0 else config['fig_width']
     
-    raw_colors = config.get('mtt_colors', [])
-    raw_markers = config.get('mtt_markers', [])
+    raw_colors, raw_markers = config.get('mtt_colors', []), config.get('mtt_markers', [])
     colors = [raw_colors[i % len(raw_colors)] if len(raw_colors) > 0 else 'black' for i in range(num_p)]
     markers = [raw_markers[i % len(raw_markers)] if len(raw_markers) > 0 else 'o' for i in range(num_p)]
     
@@ -152,10 +86,8 @@ def render_mtt_analysis(input_data, config):
             if not np.isnan(m_val) and not np.isnan(e): mtt_max_y_i = max(mtt_max_y_i, (m_val + e) * 1.15)
         ax_i.set_ylim(bottom=0, top=mtt_max_y_i)
         
-        if config.get('y_tick_interval', 0) > 0:
-            ax_i.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
-        else:
-            ax_i.yaxis.set_major_locator(ticker.AutoLocator())
+        if config.get('y_tick_interval', 0) > 0: ax_i.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
+        else: ax_i.yaxis.set_major_locator(ticker.AutoLocator())
             
         for spine in ax_i.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
         ax_i.minorticks_off()
@@ -175,18 +107,16 @@ def render_mtt_analysis(input_data, config):
             
         ax_i.tick_params(direction='in', length=5, width=1.2, labelsize=config.get('tick_fontsize', 12), colors='black', which='major')
         
-        # ★ 日本語フォントを自動判定
         ax_i.set_ylabel(config['ylabel_input'], fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8, fontname=get_font(config['ylabel_input']))
         xlabel_text = f"{config['l_name']} [{config['mtt_unit']}]"
         ax_i.set_xlabel(xlabel_text, fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8, fontname=get_font(xlabel_text))
         
         n_indiv = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for c in s_cols_plot]) if s_cols_plot else len(valid_rows)
         title_str = f"n={n_indiv}"
-        ax_i.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
+        ax_i.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(title_str))
         indiv_figs.append((plate_names[i], fig_i))
 
-    fw_c = config.get('fig_width', 0.0)
-    fw_c = 7.0 if fw_c <= 0 else fw_c
+    fw_c = 7.0 if config.get('fig_width', 0.0) <= 0 else config['fig_width']
     
     fig_comb, ax = plt.subplots(figsize=(fw_c, config.get('fig_height', 5.0)))
     fig_comb.patch.set_facecolor('white'); ax.set_facecolor('white')
@@ -236,10 +166,8 @@ def render_mtt_analysis(input_data, config):
 
     ax.set_xscale('log'); ax.set_ylim(bottom=0, top=mtt_max_y_comb)
     
-    if config.get('y_tick_interval', 0) > 0:
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
-    else:
-        ax.yaxis.set_major_locator(ticker.AutoLocator())
+    if config.get('y_tick_interval', 0) > 0: ax.yaxis.set_major_locator(ticker.MultipleLocator(config['y_tick_interval']))
+    else: ax.yaxis.set_major_locator(ticker.AutoLocator())
         
     for spine in ax.spines.values(): spine.set_color('black'); spine.set_linewidth(1.2)
     ax.minorticks_off()
@@ -259,7 +187,6 @@ def render_mtt_analysis(input_data, config):
         
     ax.tick_params(direction='in', length=5, width=1.2, labelsize=config.get('tick_fontsize', 12), colors='black', which='major')
     
-    # ★ 日本語フォントを自動判定
     ax.set_ylabel(config['ylabel_input'], fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8, fontname=get_font(config['ylabel_input']))
     ax.set_xlabel(xlabel_text, fontsize=config.get('label_fontsize', 14), fontweight='bold', labelpad=8, fontname=get_font(xlabel_text))
     
@@ -267,10 +194,7 @@ def render_mtt_analysis(input_data, config):
         leg_font = 'Liberation Sans' if platform.system() == 'Linux' else 'Arial'
         for p_name in plate_names:
             f_name = get_font(p_name)
-            # ▼ ここに 'Hiragino Sans' を追加！
-            if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']:
-                leg_font = f_name
-                break
+            if f_name in ['IPAexGothic', 'MS PGothic', 'Hiragino Sans']: leg_font = f_name; break
         ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1.0), frameon=False, prop={'size': config.get('legend_fontsize', 13), 'weight': 'normal', 'family': leg_font})
     
     max_n = max([np.count_nonzero(~np.isnan(plates_data[i][valid_rows, c])) for i in range(num_p) for c in s_cols_plot]) if num_p > 0 else 0
@@ -279,8 +203,7 @@ def render_mtt_analysis(input_data, config):
     if config.get('show_stats', True): title_str = f"{mtt_test_name}{star_str}, n={max_n}" if mtt_test_name and num_p > 1 else f"n={max_n}"
     else: title_str = f"n={max_n}"
     
-    # ★ 日本語フォントを自動判定
-    ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=15, loc='right', fontname=get_font(title_str))
+    ax.set_title(title_str, fontsize=config.get('title_fontsize', 14), pad=8, loc='right', fontname=get_font(title_str))
 
     st.pyplot(fig_comb)
     
@@ -297,7 +220,6 @@ def render_mtt_analysis(input_data, config):
         
         ws = writer.book['Summary']
         
-        # ★ Excelへ除外ログを追記
         if excel_exclude_logs:
             start_row_log = len(df_sum) + 4
             ws.cell(row=start_row_log, column=1, value="【外れ値除外記録】")
@@ -326,39 +248,29 @@ def render_mtt_analysis(input_data, config):
         
         detailed_rows = []
         for i, p_name in enumerate(plate_names):
-            arr = raw_plates[i]
-            b_mean = blank_means[i]
-            c_mean = ctrl_means[i]
-            norm_arr = plates_data[i]
-            
+            arr, b_mean, norm_arr = raw_plates[i], blank_means[i], plates_data[i]
             for r in valid_rows:
                 for c in c_cols:
                     if c not in i_cols:
                         raw_val = arr[r, c]
                         if not np.isnan(raw_val):
                             detailed_rows.append({
-                                "プレート名": p_name,
-                                "条件名": f"Control (0 {config['mtt_unit']})",
-                                "ウェル": f"{chr(65+r)}{c+1}",
+                                "プレート名": p_name, "条件名": f"Control (0 {config['mtt_unit']})", "ウェル": f"{chr(65+r)}{c+1}",
                                 "生データ (吸光度等)": float(raw_val),
                                 "ブランク補正値 (生データ - Blank)": float(raw_val - b_mean) if not np.isnan(raw_val) else np.nan,
                                 "正規化後データ (生存率 %)": float(norm_arr[r, c])
                             })
-                            
             for idx_c, c in enumerate(s_cols_plot):
                 for r in valid_rows:
                     raw_val = arr[r, c]
                     if not np.isnan(raw_val):
                         detailed_rows.append({
-                            "プレート名": p_name,
-                            "条件名": f"{conc_vals_plot[idx_c]} {config['mtt_unit']}",
-                            "ウェル": f"{chr(65+r)}{c+1}",
+                            "プレート名": p_name, "条件名": f"{conc_vals_plot[idx_c]} {config['mtt_unit']}", "ウェル": f"{chr(65+r)}{c+1}",
                             "生データ (吸光度等)": float(raw_val),
                             "ブランク補正値 (生データ - Blank)": float(raw_val - b_mean) if not np.isnan(raw_val) else np.nan,
                             "正規化後データ (生存率 %)": float(norm_arr[r, c])
                         })
-        if detailed_rows:
-            pd.DataFrame(detailed_rows).to_excel(writer, sheet_name='Detailed_Data', index=False)
+        if detailed_rows: pd.DataFrame(detailed_rows).to_excel(writer, sheet_name='Detailed_Data', index=False)
         
         for i in range(num_p):
             df_norm = pd.DataFrame(plates_data[i])
@@ -371,8 +283,7 @@ def render_mtt_analysis(input_data, config):
     dl_col1, dl_col2 = st.columns(2)
     buf_c = io.BytesIO()
     fig_comb.savefig(buf_c, format='svg', bbox_inches='tight')
-    fixed_svg_c = fix_svg_font(buf_c)
-    final_svg_c = embed_state_in_svg(fixed_svg_c)
+    final_svg_c = embed_state_in_svg(fix_svg_font(buf_c))
     
     with dl_col1: st.download_button("📥 統合グラフ(SVG)を保存", final_svg_c, "Combined_Graph.svg", "image/svg+xml", use_container_width=True)
         
@@ -380,6 +291,5 @@ def render_mtt_analysis(input_data, config):
         for p_name, f in indiv_figs:
             buf_i = io.BytesIO()
             f.savefig(buf_i, format='svg', bbox_inches='tight')
-            fixed_svg_i = fix_svg_font(buf_i)
-            final_svg_i = embed_state_in_svg(fixed_svg_i)
+            final_svg_i = embed_state_in_svg(fix_svg_font(buf_i))
             st.download_button(f"📥 {p_name} のグラフ", final_svg_i, f"{p_name}_Graph.svg", "image/svg+xml")
