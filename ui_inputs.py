@@ -80,16 +80,31 @@ def render_data_input(config, num_cond):
 
     if is_mtt:
         c1, c2, c3 = st.columns(3)
-        config['mtt_ignore_row'] = c1.text_input('空のWell(除外行):', 'A, H', key='mtt_ignore_row')
-        config['mtt_ignore_col'] = c2.text_input('空のWell(除外列):', '1', key='mtt_ignore_col')
-        config['mtt_blank_col'] = c3.text_input('バックグラウンド（培地のみ）(列):', '12', key='mtt_blank_col')
+        
+        # 1. 金庫が空なら初期値を入れる
+        if 'mtt_ignore_row' not in st.session_state: st.session_state['mtt_ignore_row'] = 'A, H'
+        if 'mtt_ignore_col' not in st.session_state: st.session_state['mtt_ignore_col'] = '1'
+        if 'mtt_blank_col' not in st.session_state: st.session_state['mtt_blank_col'] = '12'
+        
+        # 2. ウィジェットには初期値(value)を書かない（金庫の値が自動で表示される）
+        config['mtt_ignore_row'] = c1.text_input('空のWell(除外行):', key='mtt_ignore_row')
+        config['mtt_ignore_col'] = c2.text_input('空のWell(除外列):', key='mtt_ignore_col')
+        config['mtt_blank_col'] = c3.text_input('バックグラウンド（培地のみ）(列):', key='mtt_blank_col')
+        
         c4, c5 = st.columns(2)
-        config['mtt_control_col'] = c4.text_input('Control（細胞生存率100%の基準）(列):', '11', key='mtt_control_col')
-        config['mtt_sample_cols'] = c5.text_input('Sample(列):', '2-10', key='mtt_sample_cols')
+        if 'mtt_control_col' not in st.session_state: st.session_state['mtt_control_col'] = '11'
+        if 'mtt_sample_cols' not in st.session_state: st.session_state['mtt_sample_cols'] = '2-10'
+        config['mtt_control_col'] = c4.text_input('Control（細胞生存率100%の基準）(列):', key='mtt_control_col')
+        config['mtt_sample_cols'] = c5.text_input('Sample(列):', key='mtt_sample_cols')
+        
         c6, c7, c8 = st.columns(3)
-        config['mtt_start_conc'] = c6.number_input('開始濃度:', value=4000.0, key='mtt_start_conc')
-        config['mtt_dilution'] = c7.number_input('希釈倍率(n倍):', value=2.0, key='mtt_dilution')
-        config['mtt_unit'] = c8.text_input('単位:', 'μM', key='mtt_unit')
+        if 'mtt_start_conc' not in st.session_state: st.session_state['mtt_start_conc'] = 4000.0
+        if 'mtt_dilution' not in st.session_state: st.session_state['mtt_dilution'] = 2.0
+        if 'mtt_unit' not in st.session_state: st.session_state['mtt_unit'] = 'μM'
+        
+        config['mtt_start_conc'] = c6.number_input('開始濃度:', key='mtt_start_conc')
+        config['mtt_dilution'] = c7.number_input('希釈倍率(n倍):', key='mtt_dilution')
+        config['mtt_unit'] = c8.text_input('単位:', key='mtt_unit').replace('μ', 'µ')
         config['mtt_conc_direction'] = st.radio("濃度の配置方向:", ["左が高濃度 (右へ希釈)", "右が高濃度 (左へ希釈)"], horizontal=True, key='mtt_conc_direction')
         config['mtt_custom_xticks'] = st.text_input('横軸の目盛りに明示したい数値（カンマ区切りで追加指定、空欄なら自動）', value='', placeholder='例: 10, 50, 250', key='mtt_custom_xticks')
         

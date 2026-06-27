@@ -5,7 +5,6 @@ import base64
 import re
 import time
 
-# --- SVGの裏側から隠しデータを抽出する魔法の関数 ---
 def extract_state_from_svg(svg_bytes):
     try:
         svg_str = svg_bytes.decode('utf-8', errors='ignore')
@@ -26,41 +25,19 @@ from renderers.microscope import render_microscope_analysis
 from ui_sidebar import setup_config
 from ui_inputs import render_data_input
 
-# ==========================================
-# グローバル設定
-# ==========================================
 st.set_page_config(page_title="実験データ自動解析ツール v2.0", layout="wide")
 st.title("🧪 実験データ自動解析ツール v2.0")
 
 st.markdown("""
     <style>
-    /* テキストエリアの横スクロール維持 */
-    textarea {
-        white-space: pre !important;
-        overflow-wrap: normal !important;
-        overflow-x: scroll !important;
-    }
-    
-    /* サイドバーの上部余白調整 */
-    div[data-testid="stSidebarUserContent"] {
-        padding-top: 1rem;
-    }
-
-    /* =========================================================
-       🚀 グラフエリアのSticky（追従）を強制発動させる最終奥義
-       ========================================================= */
-       
-    /* 1. 親要素(左右カラムのコンテナ)の「高さ強制引き伸ばし」を解除し、上揃えにする */
-    div[data-testid="stHorizontalBlock"] {
-        align-items: flex-start !important;
-    }
-
-    /* 2. 右カラム（2番目のカラム）を狙い撃ちしてStickyをかける */
+    textarea { white-space: pre !important; overflow-wrap: normal !important; overflow-x: scroll !important; }
+    div[data-testid="stSidebarUserContent"] { padding-top: 1rem; }
+    div[data-testid="stHorizontalBlock"] { align-items: flex-start !important; }
     div[data-testid="stColumn"]:nth-of-type(2) {
         position: -webkit-sticky !important;
         position: sticky !important;
-        top: 3rem !important; /* 画面上部からの停止位置 */
-        height: max-content !important; /* ★超重要：高さを中身ピッタリに収めてスライドのスキマを作る */
+        top: 3rem !important; 
+        height: max-content !important; 
         z-index: 999 !important;
     }
     </style>
@@ -80,7 +57,6 @@ def main():
                 restored_state = extract_state_from_svg(uploaded_svg.getvalue())
                 if restored_state:
                     for k, v in restored_state.items():
-                        # ★ 修正ポイント: 表パーツに加えて、画像アップローダー(imgs_)の痕跡も復元をスキップする！
                         if k.startswith("bulk_editor_widget_") or k.startswith("imgs_"):
                             continue
                         st.session_state[k] = v
@@ -98,7 +74,6 @@ def main():
         st.sidebar.markdown("---")
 
     col_input, col_graph = st.columns([1.2, 1.0], gap="large")
-
     config, num_cond = setup_config(col_input)
 
     with col_input:
@@ -106,7 +81,6 @@ def main():
 
     with col_graph:
         st.header("📊 リアルタイムプレビュー")
-        
         try:
             if config.get('is_mtt_ic50', False):
                 render_mtt_ic50(input_data, config)

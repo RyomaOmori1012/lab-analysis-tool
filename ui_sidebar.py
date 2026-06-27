@@ -86,7 +86,7 @@ def setup_config(col_input):
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("**📊 グラフ・軸設定**")
-    ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height=68)
+    ylabel_input = st.sidebar.text_area('Y軸ラベル:', value=y_label_full, height=68).replace('μ', 'µ')
 
     microscope_stat = "median"
     if is_microscope:

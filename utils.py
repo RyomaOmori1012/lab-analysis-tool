@@ -7,6 +7,15 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import re
 import io
 from PIL import Image
+import gc
+import streamlit as st
+
+@st.cache_resource(show_spinner=False)
+def load_cellpose_model():
+    """AIモデル(Cellpose)をキャッシュしてロードのボトルネックを解消する"""
+    from cellpose import models, core
+    use_gpu = core.use_gpu()
+    return models.CellposeModel(gpu=use_gpu, model_type='cyto')
 
 # ==========================================
 # 統計・計算用ヘルパー関数
@@ -89,9 +98,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
             if len(set(lens)) > 1: return np.nan, [], "Test failed (Size mismatch for paired data)"
             
             if is_non_param:
-                # ====================================================
-                # ① 対応あり・ノンパラメトリック (Friedman検定)
-                # ====================================================
                 try:
                     _, p_anova = stats.friedmanchisquare(*valid_data)
                     test_name = "Friedman test followed by Wilcoxon signed-rank test (Holm)" if not is_vs_control else "Friedman test followed by Wilcoxon (Holm vs Control)"
@@ -111,29 +117,23 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                         pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
             
             else:
-                # ====================================================
-                # ② 対応あり・パラメトリック (Repeated Measures ANOVA)
-                # ====================================================
                 test_name = "Repeated Measures ANOVA followed by Paired t-test (Holm)" if not is_vs_control else "Repeated Measures ANOVA followed by Paired t-test (Holm vs Control)"
                 
                 try:
                     from statsmodels.stats.anova import AnovaRM
                     import pandas as pd
                     
-                    # statsmodelsのAnovaRMはデータフレーム(Long format)を要求するため変換
                     df_data = []
                     for i_cond, d in enumerate(valid_data):
                         for i_subj, val in enumerate(d):
                             df_data.append({'subject': str(i_subj), 'cond': str(i_cond), 'value': float(val)})
                     df = pd.DataFrame(df_data)
                     
-                    # 反復測定分散分析の実行
                     rm_anova = AnovaRM(df, depvar='value', subject='subject', within=['cond']).fit()
                     p_anova = rm_anova.anova_table['Pr > F'].iloc[0]
                 except: 
                     p_anova = np.nan
                 
-                # 事後検定 (対応ありt検定 + Holm法)
                 if not np.isnan(p_anova) and p_anova < 0.05:
                     raw_p, comp_pairs = [], []
                     iterator = range(1, k) if is_vs_control else combinations(range(k), 2)
@@ -149,9 +149,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
         
         else: # 対応なし (独立)
             if is_non_param:
-                # ====================================================
-                # ③ 独立・ノンパラメトリック (Kruskal-Wallis検定)
-                # ====================================================
                 try: _, p_anova = stats.kruskal(*valid_data)
                 except: p_anova = np.nan
                 
@@ -170,9 +167,6 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                         pairs = [(comp_pairs[m][0], comp_pairs[m][1], corrected_p[m]) for m in range(len(raw_p))]
             else:
                 if var_equal:
-                    # ====================================================
-                    # ④ 独立・パラメトリック・等分散 (One-way ANOVA)
-                    # ====================================================
                     test_name = "One-way ANOVA followed by Student's t-test (Holm)" if is_vs_control else "One-way ANOVA followed by Tukey's test"
                     try: _, p_anova = stats.f_oneway(*valid_data)
                     except: p_anova = np.nan
@@ -207,21 +201,16 @@ def run_statistical_test(valid_data, var_equal, is_vs_control, is_non_param, is_
                                 all_g.extend([p_idx] * len(d))
                             try:
                                 tukey = pairwise_tukeyhsd(all_v, all_g, alpha=0.05)
-                                # バージョンによる列名の違い（大文字小文字・スペース）を吸収
                                 headers = [str(h).strip().lower() for h in tukey._results_table.data[0]]
                                 g1_idx = next(i for i, h in enumerate(headers) if 'group1' in h)
                                 g2_idx = next(i for i, h in enumerate(headers) if 'group2' in h)
                                 p_idx = next((i for i, h in enumerate(headers) if 'p' in h and ('adj' in h or 'val' in h)), -1)
                                 
                                 for i, row in enumerate(tukey._results_table.data[1:]):
-                                    # 表からp値が取れない場合は、内部属性(tukey.pvalues)から強制取得
                                     p_val = float(row[p_idx]) if p_idx != -1 else float(tukey.pvalues[i])
                                     pairs.append((int(row[g1_idx]), int(row[g2_idx]), p_val))
                             except: pass
                 else:
-                    # ====================================================
-                    # ⑤ 独立・パラメトリック・不等分散 (Welch's ANOVA)
-                    # ====================================================
                     test_name = "Welch's ANOVA followed by Welch's t-test (Holm)" if is_vs_control else "Welch's ANOVA followed by Games-Howell test"
                     try: p_anova, gh_pairs = welch_anova_games_howell(valid_data)
                     except: p_anova = np.nan
@@ -295,11 +284,7 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
     summary_details = []
     
     if mode == "ai":
-        from cellpose import models, core
-        from skimage import measure
-        from skimage.transform import resize
-        use_gpu = core.use_gpu()
-        model = models.CellposeModel(gpu=use_gpu, model_type='cyto')
+        model = load_cellpose_model()
                 
     for file in uploaded_files:
         file_bytes = file.getvalue()
@@ -346,6 +331,9 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
             
         elif mode == "ai":
             try:
+                from skimage import measure
+                from skimage.transform import resize
+                
                 h, w = img_array.shape
                 max_dim = 1024
                 if max(h, w) > max_dim:
@@ -363,25 +351,28 @@ def analyze_images(uploaded_files, mode="standard", sigma=1.5, sensitivity=1.0, 
                 summary_details.append(f"{file.name}: {len(intensities)}個")
             except Exception as e:
                 raise RuntimeError(f"⚠️ AI解析エラー ({file.name}): {e}")
+        
+        # 明示的なメモリ解放 (参照を外してGC実行)
+        if 'img_array' in locals(): del img_array
+        if 'img_resized' in locals(): del img_resized
+        if 'masks' in locals(): del masks
+        if 'masks_resized' in locals(): del masks_resized
+        if 'blurred' in locals(): del blurred
+        gc.collect()
                 
     return all_intensities, " / ".join(summary_details)
 
 # ==========================================
-# ★ プレビュー画像生成（自動判別・完全復元版）
+# ★ プレビュー画像生成
 # ==========================================
 def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sensitivity=1.0, min_distance=20, min_area=200, preview_color="自動 (メタデータから判別)"):
-    # デフォルトは白黒（そのままの色）
     r_usr, g_usr, b_usr = 1.0, 1.0, 1.0 
     is_auto = "自動" in preview_color
     
     if not is_auto:
         color_map = {
-            "緑 (Green)": (0.0, 1.0, 0.0),
-            "赤 (Red)": (1.0, 0.0, 0.0),
-            "青 (Blue)": (0.0, 0.0, 1.0),
-            "シアン (Cyan)": (0.0, 1.0, 1.0),
-            "マゼンタ (Magenta)": (1.0, 0.0, 1.0),
-            "白黒 (Gray)": (1.0, 1.0, 1.0)
+            "緑 (Green)": (0.0, 1.0, 0.0), "赤 (Red)": (1.0, 0.0, 0.0), "青 (Blue)": (0.0, 0.0, 1.0),
+            "シアン (Cyan)": (0.0, 1.0, 1.0), "マゼンタ (Magenta)": (1.0, 0.0, 1.0), "白黒 (Gray)": (1.0, 1.0, 1.0)
         }
         r_usr, g_usr, b_usr = color_map.get(preview_color, (1.0, 1.0, 1.0))
 
@@ -401,8 +392,7 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
             img_gray = img_array
             
             if is_auto:
-                # ★ CZIの自動判別ロジック（復元）
-                r_mult, g_mult, b_mult = 1.0, 1.0, 1.0 # fallback
+                r_mult, g_mult, b_mult = 1.0, 1.0, 1.0
                 if isinstance(meta_xml, str):
                     match = re.search(r'<Color>([^<]+)</Color>', meta_xml, re.IGNORECASE)
                     if match:
@@ -424,7 +414,6 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
                         elif re.search(r'RFP|mCherry|Alexa.*594|Texas.*Red|Red|Cy3', meta_xml, re.IGNORECASE): r_mult, g_mult, b_mult = 1.0, 0.0, 0.0
                         elif re.search(r'DAPI|Hoechst|Blue|Alexa.*405', meta_xml, re.IGNORECASE): r_mult, g_mult, b_mult = 0.0, 0.0, 1.0
             else:
-                # マニュアル指定
                 r_mult, g_mult, b_mult = r_usr, g_usr, b_usr
             
             img_min, img_max = img_array.min(), img_array.max()
@@ -439,13 +428,10 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
             img_gray = np.array(img.convert("L"), dtype=np.float32)
             
             if img.mode in ['RGB', 'RGBA'] and is_auto:
-                # 元がカラー画像で自動指定ならそのまま使う
                 img_rgb_bg = np.array(img.convert("RGB"), dtype=np.float32) / 255.0
             else:
                 img_min, img_max = img_gray.min(), img_gray.max()
                 img_norm = (img_gray - img_min) / (img_max - img_min + 1e-10)
-                
-                # 自動指定なら白黒のまま、手動指定ならその色に塗る
                 r_mult, g_mult, b_mult = (1.0, 1.0, 1.0) if is_auto else (r_usr, g_usr, b_usr)
                 img_rgb_bg = np.stack((img_norm * r_mult, img_norm * g_mult, img_norm * b_mult), axis=-1)
         except Exception as e:
@@ -471,17 +457,14 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
         valid_labels = np.array([p.label for p in props if p.area >= min_area])
         final_labels = np.where(np.isin(labels, valid_labels), labels, 0)
         
-        # 輪郭線は黄色(1, 1, 0)で描画
         overlay = segmentation.mark_boundaries(img_rgb_bg, final_labels, color=(1, 1, 0), mode='thick')
         return overlay, len(valid_labels)
         
     elif mode == "ai":
-        from cellpose import models, core
         from skimage import measure, segmentation
         from skimage.transform import resize
         
-        use_gpu = core.use_gpu()
-        model = models.CellposeModel(gpu=use_gpu, model_type='cyto')
+        model = load_cellpose_model()
         
         h, w = img_gray.shape
         max_dim = 1024
@@ -496,8 +479,7 @@ def generate_preview_image(file_bytes, filename, mode="standard", sigma=1.5, sen
         
         props = measure.regionprops(masks, intensity_image=img_gray)
         valid_labels = np.array([p.label for p in props if p.area >= 100])
-        
         final_labels = np.where(np.isin(masks, valid_labels), masks, 0)
-        # AIモードの輪郭線は水色(0, 1, 1)で描画
+        
         overlay = segmentation.mark_boundaries(img_rgb_bg, final_labels, color=(0, 1, 1), mode='thick')
         return overlay, len(valid_labels)
